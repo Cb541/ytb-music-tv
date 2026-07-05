@@ -12,7 +12,7 @@ jobs:
   build-and-publish:
     name: Build and publish unsigned IPA
     if: github.ref_type == 'tag' && github.ref_name != 'nightly'
-    runs-on: macos-latest
+    runs-on: macos-26
 
     steps:
       - name: Check out tag
