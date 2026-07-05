@@ -20,15 +20,17 @@ export class YouTubeMusicService {
   #configStore;
   #sessionStore;
   #oauthLibraryService;
+  #fetch;
   #clientPromise;
   #playbackClientPromise;
   #streamCache = new Map();
   #streamInflight = new Map();
 
-  constructor({ configStore, sessionStore, oauthLibraryService = null }) {
+  constructor({ configStore, sessionStore, oauthLibraryService = null, fetchFunction = globalThis.fetch }) {
     this.#configStore = configStore;
     this.#sessionStore = sessionStore;
     this.#oauthLibraryService = oauthLibraryService;
+    this.#fetch = fetchFunction;
   }
 
   authStatus() {
@@ -422,6 +424,7 @@ export class YouTubeMusicService {
       user_agent: config.youtube.userAgent,
       generate_session_locally: true,
       retrieve_player: retrievePlayer,
+      fetch: this.#fetch,
       ...(clientName ? { client_name: clientName } : {}),
     });
     return client;

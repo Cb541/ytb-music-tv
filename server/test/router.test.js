@@ -75,6 +75,80 @@ test('public config excludes and cannot modify device identity', async () => {
   assert.equal(store.get().features.adblock.enabled, false);
 });
 
+test('proxy config changes require a paired client and redact credentials', async () => {
+  const store = createConfigStore();
+  const router = makeRouter({}, store);
+
+  const anonymousPatch = createResponse();
+  await router(
+    createRequest('PATCH', '/api/config', {
+      network: {
+        proxy: {
+          enabled: true,
+          url: 'http://user:secret@127.0.0.1:7890',
+        },
+      },
+    }),
+    anonymousPatch,
+  );
+  assert.equal(anonymousPatch.status, 403);
+
+  const pairing = createResponse();
+  await router(
+    createRequest('POST', '/api/pair', { name: 'Living Room', deviceCode: '123456' }),
+    pairing,
+  );
+  const token = JSON.parse(pairing.body).token;
+
+  const pairedPatch = createResponse();
+  await router(
+    createRequest('PATCH', '/api/config', {
+      network: {
+        proxy: {
+          enabled: true,
+          url: 'http://user:secret@127.0.0.1:7890',
+          noProxy: ['localhost', '.local'],
+        },
+      },
+    }, token),
+    pairedPatch,
+  );
+
+  assert.equal(pairedPatch.status, 200);
+  assert.equal(store.get().network.proxy.url, 'http://user:secret@127.0.0.1:7890');
+  const payload = JSON.parse(pairedPatch.body);
+  assert.equal(payload.network.proxy.url, 'http://user:***@127.0.0.1:7890/');
+  assert.deepEqual(payload.network.proxy.noProxy, ['localhost', '.local']);
+});
+
+test('proxy config rejects invalid proxy URLs', async () => {
+  const store = createConfigStore();
+  const router = makeRouter({}, store);
+  const pairing = createResponse();
+  await router(
+    createRequest('POST', '/api/pair', { name: 'Living Room', deviceCode: '123456' }),
+    pairing,
+  );
+  const token = JSON.parse(pairing.body).token;
+
+  const response = createResponse();
+  await router(
+    createRequest('PATCH', '/api/config', {
+      network: {
+        proxy: {
+          enabled: true,
+          url: 'ftp://proxy.example',
+        },
+      },
+    }, token),
+    response,
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(JSON.parse(response.body).error, 'invalid_proxy_config');
+  assert.equal(store.get().network, undefined);
+});
+
 test('legacy server-owned playback endpoints are no longer exposed', async () => {
   const router = makeRouter();
 

@@ -3,6 +3,7 @@ data/
 server/data/
 server/node_modules/
 client-tvos/build/
+task.md
 
 # Local environment and credentials
 .env

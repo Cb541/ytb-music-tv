@@ -156,10 +156,14 @@ Docker Compose 运行时，首次启动同样会在服务日志中显示验证�
 | `YTB_MUSIC_TV_OAUTH_CLIENT_ID` | 自动发现 | 可选的 OAuth Client ID 覆盖 |
 | `YTB_MUSIC_TV_OAUTH_CLIENT_SECRET` | 自动发现 | 可选的 OAuth Client Secret 覆盖 |
 | `YTB_MUSIC_TV_LIBRARY_MAX_ITEMS` | `200` | 每类官方 Library 内容的最大条数 |
+| `YTB_MUSIC_TV_PROXY_URL` | 空 | 出站 HTTP/SOCKS 代理 URL，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080` |
+| `YTB_MUSIC_TV_NO_PROXY` | `localhost,127.0.0.1,::1` | 不走出站代理的主机名列表，逗号分隔 |
 | `YTB_MUSIC_TV_UID` | `1000` | Docker 容器内服务进程运行 UID；辅助脚本自动使用当前用户 |
 | `YTB_MUSIC_TV_GID` | `1000` | Docker 容器内服务进程运行 GID；辅助脚本自动使用当前用户 |
 
 Docker Compose 将 TCP `4174` 和 UDP `4175` 暴露到宿主机，并把根目录的 `data/` 挂载到容器 `/data`。启动时会自动创建并修复 `/data` 权限，然后按 `YTB_MUSIC_TV_UID`/`YTB_MUSIC_TV_GID` 降权运行服务。建议通过 `scripts/docker-compose.sh` 执行 Compose，或在 `.env` 中手动设置 UID/GID，让 `data/` 中生成的文件归属宿主机当前用户。
+
+服务端出站访问 YouTube、Google OAuth 和媒体源时会使用 `network.proxy` 配置。可通过环境变量 `YTB_MUSIC_TV_PROXY_URL` 启动覆盖，或在 `data/config.json` 中设置 `network.proxy.enabled`、`network.proxy.url` 和 `network.proxy.noProxy`。代理 URL 支持 `http://`、`https://`、`socks4://`、`socks5://` 和 `socks5h://`。
 
 客户端可通过进程环境变量 `YTB_MUSIC_TV_SERVER_URL` 注入首次连接地址；之后也可在设置页修改。播放偏好、广告过滤和跳过不喜欢歌曲等配置会通过服务端 API 立即保存。
 

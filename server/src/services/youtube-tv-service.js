@@ -8,11 +8,18 @@ export class YouTubeTvService {
   #clientFactory;
   #clientPromise;
   #maxItems;
+  #fetch;
 
-  constructor({ oauth, clientFactory = createTvClient, maxItems = 200 }) {
+  constructor({
+    oauth,
+    clientFactory = createTvClient,
+    maxItems = 200,
+    fetchFunction = globalThis.fetch,
+  }) {
     this.#oauth = oauth;
     this.#clientFactory = clientFactory;
     this.#maxItems = maxItems;
+    this.#fetch = fetchFunction;
   }
 
   authStatus() {
@@ -123,17 +130,18 @@ export class YouTubeTvService {
 
   async #client() {
     if (!this.#clientPromise) {
-      this.#clientPromise = this.#clientFactory();
+      this.#clientPromise = this.#clientFactory({ fetchFunction: this.#fetch });
     }
     return await this.#clientPromise;
   }
 }
 
-const createTvClient = async () => await Innertube.create({
+const createTvClient = async ({ fetchFunction = globalThis.fetch } = {}) => await Innertube.create({
   cache: new UniversalCache(false),
   generate_session_locally: true,
   retrieve_player: false,
   client_name: TV_SESSION_CLIENT,
+  fetch: fetchFunction,
 });
 
 export const normalizeTvTile = (tile, options = {}) => normalizeTile(tile, options);

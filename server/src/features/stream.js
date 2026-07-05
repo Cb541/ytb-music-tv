@@ -1,6 +1,6 @@
 import { isBlockedUrl, proxyUrl } from './adblock.js';
 
-export const streamMedia = async ({ req, res, media, config, baseUrl }) => {
+export const streamMedia = async ({ req, res, media, config, baseUrl, fetchFunction = globalThis.fetch }) => {
   if (!media) {
     res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'media_not_found' }));
@@ -25,7 +25,7 @@ export const streamMedia = async ({ req, res, media, config, baseUrl }) => {
     return;
   }
 
-  await proxyUrl({ req, res, url: media.streamUrl, config });
+  await proxyUrl({ req, res, url: media.streamUrl, config, fetchFunction });
 };
 
 export const streamResolvedMedia = async ({
@@ -35,6 +35,7 @@ export const streamResolvedMedia = async ({
   config,
   youtubeService,
   playbackOptions,
+  fetchFunction = globalThis.fetch,
 }) => {
   if (!media) {
     res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
@@ -43,7 +44,7 @@ export const streamResolvedMedia = async ({
   }
 
   if (media.streamUrl) {
-    return await proxyUrl({ req, res, url: media.streamUrl, config });
+    return await proxyUrl({ req, res, url: media.streamUrl, config, fetchFunction });
   }
 
   if (!media.videoId) {
@@ -66,6 +67,7 @@ export const streamResolvedMedia = async ({
     res,
     url: resolved.directUrl,
     config,
+    fetchFunction,
     onUpstreamFailure: async ({ status }) => {
       if (!isRecoverableMediaStatus(status)) {
         return null;

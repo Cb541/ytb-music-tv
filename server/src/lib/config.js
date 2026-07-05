@@ -35,6 +35,17 @@ const defaultConfig = {
     defaultQuality: 'best',
     streamMode: 'proxy',
   },
+  network: {
+    proxy: {
+      enabled: false,
+      url: '',
+      noProxy: [
+        'localhost',
+        '127.0.0.1',
+        '::1',
+      ],
+    },
+  },
   youtube: {
     accountIndex: 0,
     visitorData: '',

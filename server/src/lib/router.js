@@ -8,11 +8,13 @@ import {
   parseRequestUrl,
   readJson,
 } from './http.js';
+import { normalizeProxyConfig, proxyConfigPatch, publicProxyConfig } from './proxy-fetch.js';
 
 export const createApiRouter = ({
   configStore,
   youtubeService,
   serverName = process.env.YTB_MUSIC_TV_SERVER_NAME ?? 'YTB Music TV',
+  fetchFunction = globalThis.fetch,
 }) => {
   return async (req, res) => {
     const url = parseRequestUrl(req);
@@ -47,7 +49,26 @@ export const createApiRouter = ({
         return json(res, 200, publicConfig(configStore.get()), corsHeaders());
       }
       if (req.method === 'PATCH') {
-        const patch = publicConfigPatch(await readJson(req));
+        const body = await readJson(req);
+        const currentConfig = configStore.get();
+        if (body.network && !clientForRequest(configStore, req)) {
+          return json(res, 403, { error: 'pairing_required' }, corsHeaders());
+        }
+        let patch;
+        try {
+          patch = publicConfigPatch(body);
+          if (patch.network?.proxy) {
+            normalizeProxyConfig({
+              ...(currentConfig.network?.proxy ?? {}),
+              ...patch.network.proxy,
+            });
+          }
+        } catch (error) {
+          return json(res, error.status ?? 400, {
+            error: error.code ?? 'invalid_config',
+            message: String(error?.message ?? error),
+          }, corsHeaders());
+        }
         const next = await configStore.patch(patch);
         return json(res, 200, publicConfig(next), corsHeaders());
       }
@@ -80,7 +101,13 @@ export const createApiRouter = ({
       if (!target) {
         return json(res, 400, { error: 'missing_url' }, corsHeaders());
       }
-      return await proxyUrl({ req, res, url: target, config: configStore.get() });
+      return await proxyUrl({
+        req,
+        res,
+        url: target,
+        config: configStore.get(),
+        fetchFunction,
+      });
     }
 
     if (pathname === '/api/search') {
@@ -196,6 +223,7 @@ export const createApiRouter = ({
           config,
           youtubeService,
           playbackOptions: playbackOptionsFromRequest(url, config),
+          fetchFunction,
         });
       } catch (error) {
         return streamResolveFailure(res, error);
@@ -259,9 +287,18 @@ const streamResolveFailure = (res, error) =>
 const publicConfig = (config) => ({
   features: config.features,
   playback: config.playback,
+  network: {
+    proxy: publicProxyConfig(config.network?.proxy),
+  },
 });
 
-const publicConfigPatch = (patch) => ({
-  ...(patch.features ? { features: patch.features } : {}),
-  ...(patch.playback ? { playback: patch.playback } : {}),
-});
+const publicConfigPatch = (patch) => {
+  const next = {
+    ...(patch.features ? { features: patch.features } : {}),
+    ...(patch.playback ? { playback: patch.playback } : {}),
+  };
+  if (patch.network) {
+    next.network = proxyConfigPatch(patch.network);
+  }
+  return next;
+};

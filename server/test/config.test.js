@@ -14,6 +14,11 @@ test('server identity and six-digit device code persist across restarts', async 
     const first = firstStore.get();
     assert.match(first.security.deviceCode, /^\d{6}$/);
     assert.ok(first.security.serverId);
+    assert.deepEqual(first.network.proxy, {
+      enabled: false,
+      url: '',
+      noProxy: ['localhost', '127.0.0.1', '::1'],
+    });
     assert.equal('auth' in first, false);
 
     const secondStore = await loadConfig(dataDir);

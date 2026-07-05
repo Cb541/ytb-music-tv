@@ -904,6 +904,7 @@ private struct PlayerScreen: View {
     @State private var panel: PlayerPanel?
     @State private var controlsVisible = true
     @State private var controlsActivityID = 0
+    @State private var progressScrubbing = false
     @FocusState private var playButtonFocused: Bool
 
     private static let controlsTimeoutNanoseconds: UInt64 = 3_500_000_000
@@ -943,6 +944,7 @@ private struct PlayerScreen: View {
                         endPoint: .bottomTrailing
                     )
                     .frame(width: proxy.size.width, height: proxy.size.height)
+                    .allowsHitTesting(false)
                     .zIndex(2)
                     .transition(.opacity)
                 }
@@ -956,6 +958,8 @@ private struct PlayerScreen: View {
                         panel: panel,
                         controlsVisible: controlsVisible,
                         playButtonFocused: $playButtonFocused,
+                        progressScrubbing: $progressScrubbing,
+                        onActivity: registerActivity,
                         togglePanel: togglePanel
                     )
                     .zIndex(3)
@@ -988,16 +992,6 @@ private struct PlayerScreen: View {
                     .zIndex(5)
                 }
 
-                #if os(tvOS)
-                    if !controlsVisible, viewModel.state?.currentMedia != nil {
-                        RemoteActivityObserver(
-                            onActivity: registerActivity,
-                            onExit: onBack
-                        )
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .zIndex(6)
-                    }
-                #endif
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
@@ -1044,6 +1038,10 @@ private struct PlayerScreen: View {
             try? await Task.sleep(nanoseconds: Self.controlsTimeoutNanoseconds)
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                if progressScrubbing {
+                    registerActivity()
+                    return
+                }
                 hideControls()
             }
         }
@@ -1073,8 +1071,45 @@ private struct PlayerScreen: View {
 
     private func hideControls() {
         panel = nil
+        progressScrubbing = false
         controlsVisible = false
         playButtonFocused = false
+    }
+}
+
+private struct PlayerMetadataOverlay: View {
+    private static let horizontalInset: CGFloat = 86
+    private static let topInset: CGFloat = 72
+
+    var screenSize: CGSize
+    var media: MediaItem
+
+    var body: some View {
+        let width = max(0, screenSize.width - Self.horizontalInset * 2)
+
+        HStack(alignment: .center, spacing: 18) {
+            ArtworkThumb(url: media.artworkUrl, size: 112, cornerRadius: 6)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(media.title)
+                    .font(.system(size: 42, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text(media.artist)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 20)
+        }
+        .frame(width: width, alignment: .leading)
+        .position(
+            x: screenSize.width / 2,
+            y: Self.topInset + 56
+        )
+        .frame(width: screenSize.width, height: screenSize.height)
     }
 }
 
@@ -1089,6 +1124,8 @@ private struct PlayerControlsOverlay: View {
     var panel: PlayerPanel?
     var controlsVisible: Bool
     var playButtonFocused: FocusState<Bool>.Binding
+    var progressScrubbing: Binding<Bool>
+    var onActivity: () -> Void
     var togglePanel: (PlayerPanel) -> Void
 
     var body: some View {
@@ -1104,6 +1141,8 @@ private struct PlayerControlsOverlay: View {
             l10n: l10n,
             panel: panel,
             playButtonFocused: playButtonFocused,
+            progressScrubbing: progressScrubbing,
+            onActivity: onActivity,
             togglePanel: togglePanel
         )
         .frame(width: width, height: PlayerBottomBar.layoutHeight, alignment: .topLeading)
@@ -1149,77 +1188,6 @@ private struct PlayerControlsOverlay: View {
 
         var playerLayer: AVPlayerLayer {
             layer as! AVPlayerLayer
-        }
-    }
-
-    private struct RemoteActivityObserver: UIViewControllerRepresentable {
-        var onActivity: () -> Void
-        var onExit: () -> Void
-
-        func makeCoordinator() -> Coordinator {
-            Coordinator(onActivity: onActivity, onExit: onExit)
-        }
-
-        func makeUIViewController(context: Context) -> RemoteActivityViewController {
-            let controller = RemoteActivityViewController()
-            controller.onActivity = { context.coordinator.onActivity() }
-            controller.onExit = { context.coordinator.onExit() }
-            DispatchQueue.main.async {
-                controller.becomeFirstResponder()
-            }
-            return controller
-        }
-
-        func updateUIViewController(_ controller: RemoteActivityViewController, context: Context) {
-            context.coordinator.onActivity = onActivity
-            context.coordinator.onExit = onExit
-            controller.onExit = { context.coordinator.onExit() }
-            DispatchQueue.main.async {
-                controller.becomeFirstResponder()
-            }
-        }
-
-        static func dismantleUIViewController(
-            _ controller: RemoteActivityViewController,
-            coordinator _: Coordinator
-        ) {
-            controller.resignFirstResponder()
-        }
-
-        final class Coordinator {
-            var onActivity: () -> Void
-            var onExit: () -> Void
-
-            init(onActivity: @escaping () -> Void, onExit: @escaping () -> Void) {
-                self.onActivity = onActivity
-                self.onExit = onExit
-            }
-        }
-    }
-
-    private final class RemoteActivityViewController: UIViewController {
-        var onActivity: (() -> Void)?
-        var onExit: (() -> Void)?
-
-        override var canBecomeFirstResponder: Bool { true }
-
-        override func loadView() {
-            let view = UIView()
-            view.backgroundColor = .clear
-            view.isUserInteractionEnabled = true
-            self.view = view
-        }
-
-        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-            if presses.contains(where: { $0.type == .menu }) {
-                onExit?()
-                return
-            }
-
-            if presses.contains(where: { $0.type != .menu }) {
-                onActivity?()
-            }
-            super.pressesBegan(presses, with: event)
         }
     }
 #endif
@@ -1296,6 +1264,8 @@ private struct PlayerBottomBar: View {
     var l10n: L10n
     var panel: PlayerPanel?
     var playButtonFocused: FocusState<Bool>.Binding
+    var progressScrubbing: Binding<Bool>
+    var onActivity: () -> Void
     var togglePanel: (PlayerPanel) -> Void
 
     var body: some View {
@@ -1319,12 +1289,19 @@ private struct PlayerBottomBar: View {
             }
 
             HStack(alignment: .center, spacing: 24) {
-                PrimaryPlayButton(viewModel: viewModel, l10n: l10n, focused: playButtonFocused)
+                PrimaryPlayButton(
+                    viewModel: viewModel,
+                    l10n: l10n,
+                    focused: playButtonFocused,
+                    disabled: progressScrubbing.wrappedValue
+                )
 
                 ProgressStrip(
                     currentMs: viewModel.playbackTimeMs,
                     durationMs: viewModel.playbackDurationMs,
                     l10n: l10n,
+                    scrubbing: progressScrubbing,
+                    onActivity: onActivity,
                     seek: viewModel.seek
                 )
                 .frame(maxWidth: .infinity)
@@ -1457,6 +1434,7 @@ private struct PrimaryPlayButton: View {
     @ObservedObject var viewModel: PlayerViewModel
     var l10n: L10n
     var focused: FocusState<Bool>.Binding
+    var disabled = false
 
     var body: some View {
         Button {
@@ -1471,6 +1449,7 @@ private struct PrimaryPlayButton: View {
         .tint(.white)
         .foregroundStyle(.black)
         .focused(focused)
+        .disabled(disabled)
         .accessibilityLabel(viewModel.state?.status == "playing" ? l10n.text("player.pause") : l10n.text("player.play"))
     }
 }
@@ -1507,64 +1486,432 @@ private struct ProgressStrip: View {
     var currentMs: Int
     var durationMs: Int
     var l10n: L10n
+    @Binding var scrubbing: Bool
+    var onActivity: () -> Void
     var seek: (Int) -> Void
 
+    @State private var scrubMs = 0
+    @State private var scrubRunDirection: ScrubDirection?
+    @State private var scrubRunCount = 0
+    @State private var lastScrubMoveAt = Date.distantPast
+    @State private var scrubHoldTask: Task<Void, Never>?
+    @State private var lastPressLifecycleAt = Date.distantPast
+    @State private var lastObservedSelectAt = Date.distantPast
     @FocusState private var focused: Bool
 
     var body: some View {
+        progressControl
+            .buttonStyle(RemoteButtonStyle())
+            .focusEffectDisabled()
+            .disabled(durationMs <= 0)
+            .focused($focused)
+            .onMoveCommand(perform: handleScrubMove)
+            .onChange(of: focused) {
+                if !focused && !scrubbing {
+                    stopScrubHold()
+                }
+            }
+            .onChange(of: currentMs) {
+                if !scrubbing {
+                    scrubMs = currentMs
+                }
+            }
+            .onChange(of: durationMs) {
+                scrubMs = clamped(scrubMs)
+                if durationMs <= 0 {
+                    cancelScrubbing()
+                }
+            }
+            .accessibilityLabel(l10n.text("player.position"))
+            .accessibilityValue(
+                "\(formatDuration(displayedMs)), \(l10n.text("player.remaining")) \(formatDuration(max(0, durationMs - displayedMs)))"
+            )
+    }
+
+    @ViewBuilder
+    private var progressControl: some View {
+        Button(action: handleButtonSelect) {
+            progressContents
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .glassSurface(
+                    cornerRadius: 16,
+                    interactive: true,
+                    emphasized: focused || scrubbing,
+                    highlightColor: scrubbing ? .red : .white
+                )
+        }
+        .overlay {
+            #if os(tvOS)
+                if scrubbing {
+                    ScrubPressObserver(
+                        onDirectionBegan: handleObservedDirectionBegan,
+                        onDirectionEnded: { _ in stopScrubHold() },
+                        onSelect: handleObservedSelect,
+                        onCancel: cancelScrubbing
+                    )
+                }
+            #endif
+        }
+    }
+
+    private var progressContents: some View {
         VStack(spacing: 10) {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(.white.opacity(focused ? 0.34 : 0.2))
+                        .fill(.white.opacity(trackOpacity))
                     Capsule()
                         .fill(.red)
-                        .frame(width: proxy.size.width * progress)
-                        .animation(.linear(duration: 0.95), value: currentMs)
+                        .frame(width: proxy.size.width * displayedProgress)
+                        .animation(scrubbing ? nil : .linear(duration: 0.95), value: currentMs)
 
                     Circle()
                         .fill(.white)
-                        .frame(width: focused ? 24 : 14, height: focused ? 24 : 14)
-                        .offset(x: max(0, proxy.size.width * progress - (focused ? 12 : 7)))
+                        .frame(width: knobSize, height: knobSize)
+                        .offset(x: max(0, proxy.size.width * displayedProgress - knobSize / 2))
                         .opacity(durationMs > 0 ? 1 : 0)
                 }
             }
-            .frame(height: focused ? 16 : 8)
+            .frame(height: trackHeight)
 
             HStack {
-                Text(formatDuration(currentMs))
+                Text(formatDuration(displayedMs))
                 Spacer()
-                Text("−\(formatDuration(max(0, durationMs - currentMs)))")
+                Text("-\(formatDuration(max(0, durationMs - displayedMs)))")
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(scrubbing ? .white : .secondary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .glassSurface(cornerRadius: 16, emphasized: focused)
-        .focusable(durationMs > 0)
-        .focused($focused)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left:
-                seek(max(0, currentMs - 10000))
-            case .right:
-                seek(min(durationMs, currentMs + 10000))
-            default:
-                break
-            }
-        }
-        .accessibilityLabel(l10n.text("player.position"))
-        .accessibilityValue(
-            "\(formatDuration(currentMs)), \(l10n.text("player.remaining")) \(formatDuration(max(0, durationMs - currentMs)))"
-        )
     }
 
-    private var progress: CGFloat {
+    private func handleButtonSelect() {
+        guard Date().timeIntervalSince(lastObservedSelectAt) > 0.25 else { return }
+        toggleScrubbing()
+    }
+
+    private func handleObservedSelect() {
+        lastObservedSelectAt = Date()
+        toggleScrubbing()
+    }
+
+    private func toggleScrubbing() {
+        guard durationMs > 0 else { return }
+        onActivity()
+        if scrubbing {
+            seek(clamped(scrubMs))
+            scrubbing = false
+            stopScrubHold()
+        } else {
+            scrubMs = clamped(currentMs)
+            scrubbing = true
+            stopScrubHold()
+        }
+    }
+
+    private func handleScrubMove(_ direction: MoveCommandDirection) {
+        guard Date().timeIntervalSince(lastPressLifecycleAt) > 0.18 else { return }
+        guard scrubbing, let scrubDirection = ScrubDirection(direction) else { return }
+
+        updateScrubAcceleration(direction: scrubDirection)
+        onActivity()
+
+        let step = scrubStepMs(for: scrubRunCount)
+        moveScrub(scrubDirection, by: step)
+    }
+
+    private func handleObservedDirectionBegan(_ direction: ScrubDirection) {
+        lastPressLifecycleAt = Date()
+        beginScrubHold(direction)
+    }
+
+    private func beginScrubHold(_ direction: ScrubDirection) {
+        guard scrubbing else { return }
+        stopScrubHold(resetAcceleration: false)
+        scrubRunDirection = direction
+        scrubRunCount = 1
+        lastScrubMoveAt = Date()
+        onActivity()
+        moveScrub(direction, by: 1_000)
+
+        let startedAt = Date()
+        scrubHoldTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(330))
+            while !Task.isCancelled {
+                let elapsed = Date().timeIntervalSince(startedAt)
+                onActivity()
+                moveScrub(direction, by: scrubHoldStepMs(elapsed: elapsed))
+                try? await Task.sleep(for: .milliseconds(110))
+            }
+        }
+    }
+
+    private func moveScrub(_ direction: ScrubDirection, by step: Int) {
+        switch direction {
+        case .left:
+            scrubMs = clamped(scrubMs - step)
+        case .right:
+            scrubMs = clamped(scrubMs + step)
+        }
+    }
+
+    private func updateScrubAcceleration(direction: ScrubDirection) {
+        let now = Date()
+        if scrubRunDirection == direction,
+           now.timeIntervalSince(lastScrubMoveAt) < 0.55 {
+            scrubRunCount += 1
+        } else {
+            scrubRunDirection = direction
+            scrubRunCount = 1
+        }
+        lastScrubMoveAt = now
+    }
+
+    private var displayedMs: Int {
+        scrubbing ? scrubMs : currentMs
+    }
+
+    private var displayedProgress: CGFloat {
         guard durationMs > 0 else { return 0 }
-        return min(1, max(0, CGFloat(currentMs) / CGFloat(durationMs)))
+        return min(1, max(0, CGFloat(displayedMs) / CGFloat(durationMs)))
+    }
+
+    private var trackOpacity: Double {
+        if scrubbing { return 0.42 }
+        return focused ? 0.34 : 0.2
+    }
+
+    private var trackHeight: CGFloat {
+        scrubbing || focused ? 16 : 8
+    }
+
+    private var knobSize: CGFloat {
+        scrubbing || focused ? 24 : 14
+    }
+
+    private func scrubStepMs(for count: Int) -> Int {
+        switch count {
+        case ...3:
+            return 1_000
+        case 4 ... 7:
+            return 2_000
+        case 8 ... 12:
+            return 5_000
+        case 13 ... 20:
+            return 10_000
+        case 21 ... 32:
+            return 30_000
+        default:
+            return 60_000
+        }
+    }
+
+    private func scrubHoldStepMs(elapsed: TimeInterval) -> Int {
+        switch elapsed {
+        case ..<1.1:
+            return 1_000
+        case ..<2.2:
+            return 2_000
+        case ..<4.0:
+            return 5_000
+        case ..<7.0:
+            return 10_000
+        case ..<12.0:
+            return 30_000
+        default:
+            return 60_000
+        }
+    }
+
+    private func clamped(_ value: Int) -> Int {
+        min(max(0, value), max(0, durationMs))
+    }
+
+    private func cancelScrubbing() {
+        scrubbing = false
+        stopScrubHold()
+    }
+
+    private func stopScrubHold(resetAcceleration: Bool = true) {
+        scrubHoldTask?.cancel()
+        scrubHoldTask = nil
+        if resetAcceleration {
+            scrubRunDirection = nil
+            scrubRunCount = 0
+            lastScrubMoveAt = .distantPast
+        }
     }
 }
+
+private enum ScrubDirection: Hashable {
+    case left
+    case right
+
+    init?(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left:
+            self = .left
+        case .right:
+            self = .right
+        default:
+            return nil
+        }
+    }
+}
+
+#if os(tvOS)
+    private struct ScrubPressObserver: UIViewControllerRepresentable {
+        var onDirectionBegan: (ScrubDirection) -> Void
+        var onDirectionEnded: (ScrubDirection) -> Void
+        var onSelect: () -> Void
+        var onCancel: () -> Void
+
+        func makeUIViewController(context: Context) -> ScrubPressViewController {
+            let controller = ScrubPressViewController()
+            update(controller, coordinator: context.coordinator)
+            DispatchQueue.main.async {
+                controller.becomeFirstResponder()
+            }
+            return controller
+        }
+
+        func updateUIViewController(_ controller: ScrubPressViewController, context: Context) {
+            update(controller, coordinator: context.coordinator)
+            DispatchQueue.main.async {
+                controller.becomeFirstResponder()
+            }
+        }
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator(
+                onDirectionBegan: onDirectionBegan,
+                onDirectionEnded: onDirectionEnded,
+                onSelect: onSelect,
+                onCancel: onCancel
+            )
+        }
+
+        static func dismantleUIViewController(
+            _ controller: ScrubPressViewController,
+            coordinator _: Coordinator
+        ) {
+            controller.endActiveDirections()
+            controller.resignFirstResponder()
+        }
+
+        private func update(_ controller: ScrubPressViewController, coordinator: Coordinator) {
+            coordinator.onDirectionBegan = onDirectionBegan
+            coordinator.onDirectionEnded = onDirectionEnded
+            coordinator.onSelect = onSelect
+            coordinator.onCancel = onCancel
+            controller.coordinator = coordinator
+        }
+
+        final class Coordinator {
+            var onDirectionBegan: (ScrubDirection) -> Void
+            var onDirectionEnded: (ScrubDirection) -> Void
+            var onSelect: () -> Void
+            var onCancel: () -> Void
+
+            init(
+                onDirectionBegan: @escaping (ScrubDirection) -> Void,
+                onDirectionEnded: @escaping (ScrubDirection) -> Void,
+                onSelect: @escaping () -> Void,
+                onCancel: @escaping () -> Void
+            ) {
+                self.onDirectionBegan = onDirectionBegan
+                self.onDirectionEnded = onDirectionEnded
+                self.onSelect = onSelect
+                self.onCancel = onCancel
+            }
+        }
+    }
+
+    private final class ScrubPressViewController: UIViewController {
+        var coordinator: ScrubPressObserver.Coordinator?
+        private var activeDirections = Set<ScrubDirection>()
+
+        override var canBecomeFirstResponder: Bool { true }
+
+        override func loadView() {
+            let view = UIView()
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = true
+            self.view = view
+        }
+
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            var handled = false
+            for press in presses {
+                switch press.type {
+                case .leftArrow:
+                    handled = begin(.left) || handled
+                case .rightArrow:
+                    handled = begin(.right) || handled
+                case .select:
+                    coordinator?.onSelect()
+                    handled = true
+                case .menu:
+                    coordinator?.onCancel()
+                    handled = true
+                default:
+                    break
+                }
+            }
+
+            if !handled {
+                super.pressesBegan(presses, with: event)
+            }
+        }
+
+        override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            if !endDirections(in: presses) {
+                super.pressesEnded(presses, with: event)
+            }
+        }
+
+        override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            if !endDirections(in: presses) {
+                super.pressesCancelled(presses, with: event)
+            }
+        }
+
+        private func begin(_ direction: ScrubDirection) -> Bool {
+            guard activeDirections.insert(direction).inserted else { return true }
+            coordinator?.onDirectionBegan(direction)
+            return true
+        }
+
+        private func endDirections(in presses: Set<UIPress>) -> Bool {
+            var handled = false
+            for press in presses {
+                switch press.type {
+                case .leftArrow:
+                    end(.left)
+                    handled = true
+                case .rightArrow:
+                    end(.right)
+                    handled = true
+                default:
+                    break
+                }
+            }
+            return handled
+        }
+
+        private func end(_ direction: ScrubDirection) {
+            guard activeDirections.remove(direction) != nil else { return }
+            coordinator?.onDirectionEnded(direction)
+        }
+
+        func endActiveDirections() {
+            for direction in activeDirections {
+                coordinator?.onDirectionEnded(direction)
+            }
+            activeDirections.removeAll()
+        }
+    }
+#endif
 
 private struct SettingsView: View {
     private enum ConnectionFocus: Hashable {

@@ -14,6 +14,8 @@
     "node": ">=22"
   },
   "dependencies": {
+    "node-fetch": "^3.3.2",
+    "proxy-agent": "^6.5.0",
     "youtubei.js": "17.0.1"
   }
 }

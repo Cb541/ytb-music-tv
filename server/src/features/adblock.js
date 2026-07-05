@@ -22,7 +22,14 @@ export const isBlockedUrl = (input, adblockConfig) => {
   );
 };
 
-export const proxyUrl = async ({ req, res, url, config, onUpstreamFailure = null }) => {
+export const proxyUrl = async ({
+  req,
+  res,
+  url,
+  config,
+  onUpstreamFailure = null,
+  fetchFunction = globalThis.fetch,
+}) => {
   if (isBlockedUrl(url, config.features.adblock)) {
     res.writeHead(403, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'blocked_by_adblock', url }));
@@ -33,7 +40,7 @@ export const proxyUrl = async ({ req, res, url, config, onUpstreamFailure = null
   if (req.headers.range) {
     headers.range = req.headers.range;
   }
-  const upstream = await fetch(url, {
+  const upstream = await fetchFunction(url, {
     method: 'GET',
     headers,
     redirect: 'follow',
@@ -54,7 +61,14 @@ export const proxyUrl = async ({ req, res, url, config, onUpstreamFailure = null
     });
     if (retryUrl) {
       await upstream.body?.cancel();
-      return await proxyUrl({ req, res, url: retryUrl, config });
+      return await proxyUrl({
+        req,
+        res,
+        url: retryUrl,
+        config,
+        onUpstreamFailure,
+        fetchFunction,
+      });
     }
   }
   const responseHeaders = {};

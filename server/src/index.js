@@ -6,6 +6,7 @@ import { loadConfig } from './lib/config.js';
 import { startDiscoveryServer } from './lib/discovery.js';
 import { startOAuthLoginFlow } from './lib/oauth-login-flow.js';
 import { loadOAuthStore } from './lib/oauth-store.js';
+import { createProxyFetch, effectiveProxyConfig, redactProxyUrl } from './lib/proxy-fetch.js';
 import { createApiRouter } from './lib/router.js';
 import { loadSessionStore } from './lib/session-store.js';
 import { GoogleOAuthClient, oauthConfigFromEnv } from './services/google-oauth.js';
@@ -19,25 +20,30 @@ const dataDir = process.env.YTB_MUSIC_TV_DATA_DIR ?? new URL('../data', import.m
 const serverName = process.env.YTB_MUSIC_TV_SERVER_NAME ?? hostname();
 
 const configStore = await loadConfig(dataDir);
+const fetchFunction = createProxyFetch({ configStore });
 const sessionStore = await loadSessionStore(dataDir);
 const oauthStore = await loadOAuthStore(dataDir, { watch: true });
 const oauth = new GoogleOAuthClient({
   store: oauthStore,
+  fetchFunction,
   ...oauthConfigFromEnv(),
 });
 const youtubeTvService = new YouTubeTvService({
   oauth,
+  fetchFunction,
   maxItems: Number.parseInt(process.env.YTB_MUSIC_TV_LIBRARY_MAX_ITEMS ?? '200', 10),
 });
 const youtubeService = new YouTubeMusicService({
   configStore,
   sessionStore,
   oauthLibraryService: youtubeTvService,
+  fetchFunction,
 });
 const router = createApiRouter({
   configStore,
   youtubeService,
   serverName,
+  fetchFunction,
 });
 const config = configStore.get();
 
@@ -61,6 +67,10 @@ const server = createServer((req, res) => {
 server.listen(port, host, () => {
   console.log(`YTB Music TV server listening on http://${host}:${port}`);
   console.log(`YTB Music TV device code: ${config.security.deviceCode}`);
+  const proxyConfig = effectiveProxyConfig(config.network?.proxy);
+  if (proxyConfig.enabled) {
+    console.log(`YTB Music TV outbound proxy enabled: ${redactProxyUrl(proxyConfig.url)}`);
+  }
 
   const authStatus = youtubeService.authStatus();
   if (!authStatus.hasOAuthToken) {
