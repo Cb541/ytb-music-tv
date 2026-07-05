@@ -1,0 +1,91 @@
+name: Release Client IPA
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and publish unsigned IPA
+    if: github.ref_type == 'tag' && github.ref_name != 'nightly'
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: release
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+
+          if [[ ! "${version}" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag '${tag}' is not a supported version tag." >&2
+            exit 1
+          fi
+
+          short_version="${version%%[-+]*}"
+          safe_tag="${tag//\//-}"
+          release_flags=""
+          if [[ "${version}" == 0.* || "${version}" == *-* ]]; then
+            release_flags="--prerelease"
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${short_version}" >> "${GITHUB_OUTPUT}"
+          echo "ipa_name=YTBMusicTV-${safe_tag}-unsigned.ipa" >> "${GITHUB_OUTPUT}"
+          echo "release_flags=${release_flags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Show Xcode and tvOS SDK versions
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-version
+
+      - name: Build unsigned tvOS IPA
+        id: build
+        working-directory: client-tvos
+        env:
+          CONFIGURATION: Release
+          VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          IPA_NAME: ${{ steps.release.outputs.ipa_name }}
+        run: |
+          set -euo pipefail
+          echo "ipa_path=${PWD}/build/${IPA_NAME}" >> "${GITHUB_OUTPUT}"
+          OUTPUT_IPA="${PWD}/build/${IPA_NAME}" ./build-ipa.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-unsigned-ipa
+          path: ${{ steps.build.outputs.ipa_path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          IPA_PATH: ${{ steps.build.outputs.ipa_path }}
+          RELEASE_FLAGS: ${{ steps.release.outputs.release_flags }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${IPA_PATH}" --clobber
+          else
+            # shellcheck disable=SC2086
+            gh release create "${TAG}" "${IPA_PATH}" \
+              --title "${TAG}" \
+              --notes "Unsigned tvOS IPA built from tag ${TAG} at ${GITHUB_SHA}." \
+              --verify-tag \
+              ${RELEASE_FLAGS}
+          fi

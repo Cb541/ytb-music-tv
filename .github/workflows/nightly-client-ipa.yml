@@ -1,0 +1,76 @@
+name: Nightly Client IPA
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-client-ipa
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    name: Build and publish nightly unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Show Xcode and tvOS SDK versions
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-version
+
+      - name: Build unsigned tvOS IPA
+        id: build
+        working-directory: client-tvos
+        env:
+          CONFIGURATION: Release
+          VERSION: 0.1.0
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          ipa_name="YTBMusicTV-nightly-${short_sha}-unsigned.ipa"
+          echo "ipa_path=${PWD}/build/${ipa_name}" >> "${GITHUB_OUTPUT}"
+          OUTPUT_IPA="${PWD}/build/${ipa_name}" ./build-ipa.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-unsigned-ipa
+          path: ${{ steps.build.outputs.ipa_path }}
+          if-no-files-found: error
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IPA_PATH: ${{ steps.build.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          tag="nightly"
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release delete "${tag}" --yes
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}" --force
+
+          gh release create "${tag}" "${IPA_PATH}" \
+            --title "Nightly" \
+            --notes "Unsigned tvOS IPA built from main at ${GITHUB_SHA}." \
+            --prerelease \
+            --latest=false \
+            --verify-tag
