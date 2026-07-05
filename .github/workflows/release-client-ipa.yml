@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Check out tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
 
@@ -64,7 +64,7 @@ jobs:
           OUTPUT_IPA="${PWD}/build/${IPA_NAME}" ./build-ipa.sh
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-unsigned-ipa
           path: ${{ steps.build.outputs.ipa_path }}
