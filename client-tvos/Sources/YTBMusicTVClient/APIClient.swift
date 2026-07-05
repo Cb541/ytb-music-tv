@@ -59,7 +59,8 @@ struct APIClient {
     }
 
     private func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
-        let request = request(path, queryItems: queryItems)
+        var request = request(path, queryItems: queryItems)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)

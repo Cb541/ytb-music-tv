@@ -62,6 +62,7 @@ final class PlayerViewModel: ObservableObject {
     private var nextPlaybackCache: NextPlaybackCache?
     private var configUpdateTask: Task<Void, Never>?
     private var configRevision = 0
+    private var homeLoadRevision = 0
     private var homeNavigationHistory: [[MediaSection]] = []
     private var searchNavigationHistory: [[MediaSection]] = []
     private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
@@ -207,8 +208,14 @@ final class PlayerViewModel: ObservableObject {
 
     func loadHome() async {
         guard let client else { return }
+        homeLoadRevision &+= 1
+        let revision = homeLoadRevision
         isLoadingHome = true
-        defer { isLoadingHome = false }
+        defer {
+            if revision == homeLoadRevision {
+                isLoadingHome = false
+            }
+        }
 
         do {
             async let libraryResponse = client.library()
@@ -219,6 +226,7 @@ final class PlayerViewModel: ObservableObject {
             let home = try await homeResponse
             let explore = try await exploreResponse
 
+            guard revision == homeLoadRevision else { return }
             librarySections = library.sections
             exploreSections = explore.sections
             homeSections = composeHomeSections(
@@ -230,6 +238,7 @@ final class PlayerViewModel: ObservableObject {
 
             errorMessage = nil
         } catch {
+            guard revision == homeLoadRevision else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -553,10 +562,10 @@ final class PlayerViewModel: ObservableObject {
         if let videoID = media.videoId {
             let resolved = try await client.resolve(mediaId: videoID)
             var merged = merge(media, with: resolved.media)
-            let playbackURL = resolved.directUrl
-            let fallbackURL = resolved.proxyUrl == playbackURL ? nil : resolved.proxyUrl
+            let playbackURLs = playbackURLs(for: resolved, streamMode: config?.playback.streamMode)
+            let playbackURL = playbackURLs.primary
             merged.playbackUrl = playbackURL
-            return (merged, playbackURL, fallbackURL, resolved.hasVideo == true, resolved.mimeType)
+            return (merged, playbackURL, playbackURLs.fallback, resolved.hasVideo == true, resolved.mimeType)
         }
 
         if let playbackURL = media.streamUrl ?? media.playbackUrl {
@@ -720,7 +729,8 @@ final class PlayerViewModel: ObservableObject {
                       self.state?.currentMediaId == currentMedia.id else { return }
 
                 var merged = merge(currentMedia, with: resolved.media)
-                merged.playbackUrl = resolved.directUrl
+                let playbackURLs = self.playbackURLs(for: resolved, streamMode: self.config?.playback.streamMode)
+                merged.playbackUrl = playbackURLs.primary
                 if var nextState = self.state {
                     nextState.currentMedia = merged
                     if let index = nextState.queue.firstIndex(where: { $0.id == merged.id }) {
@@ -730,16 +740,32 @@ final class PlayerViewModel: ObservableObject {
                 }
 
                 self.currentStreamHasVideo = false
-                let fallbackURLs = resolved.proxyUrl == resolved.directUrl
-                    ? []
-                    : resolved.proxyUrl.map { [$0] } ?? []
-                self.configurePlayer(url: resolved.directUrl, fallbackURLs: fallbackURLs)
+                self.configurePlayer(
+                    url: playbackURLs.primary,
+                    fallbackURLs: playbackURLs.fallback.map { [$0] } ?? []
+                )
             } catch {
                 guard self.playbackRequestID == requestID else { return }
                 self.reportPlaybackFailure(error.localizedDescription)
             }
         }
         return true
+    }
+
+    private func playbackURLs(
+        for resolved: ResolvedStream,
+        streamMode: String?
+    ) -> (primary: URL, fallback: URL?) {
+        let directURL = resolved.directUrl
+        guard let proxyURL = resolved.proxyUrl, proxyURL != directURL else {
+            return (directURL, nil)
+        }
+
+        if streamMode?.lowercased() == "direct" {
+            return (directURL, proxyURL)
+        }
+
+        return (proxyURL, directURL)
     }
 
     private func reportPlaybackFailure(_ reason: String) {

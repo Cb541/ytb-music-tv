@@ -69,6 +69,7 @@ struct ContentView: View {
                         l10n: l10n,
                         openPlayer: openPlayer,
                         focusRequestID: menuFocusRequestID,
+                        selectTab: selectTab,
                         tabFocused: { tab in
                             if tab == .home {
                                 homeFocusRequestID &+= 1
@@ -161,6 +162,16 @@ struct ContentView: View {
         }
     }
 
+    private func selectTab(_ tab: AppTab) {
+        selectedTab = tab
+
+        guard tab == .home else { return }
+        homeFocusRequestID &+= 1
+        Task {
+            await viewModel.loadHome()
+        }
+    }
+
     private func returnHomeFromPlayer() {
         viewModel.cancelPendingPlayback()
         viewModel.resetHomeNavigation()
@@ -206,6 +217,7 @@ private struct AppShell<Content: View>: View {
     var l10n: L10n
     var openPlayer: () -> Void
     var focusRequestID: Int
+    var selectTab: (AppTab) -> Void
     var tabFocused: (AppTab) -> Void
     @ViewBuilder var content: () -> Content
 
@@ -219,6 +231,7 @@ private struct AppShell<Content: View>: View {
                 l10n: l10n,
                 openPlayer: openPlayer,
                 focusedTab: $focusedTab,
+                selectTab: selectTab,
                 tabFocused: tabFocused
             )
             .padding(.top, 58)
@@ -244,6 +257,7 @@ private struct TopNavigationBar: View {
     var l10n: L10n
     var openPlayer: () -> Void
     var focusedTab: FocusState<AppTab?>.Binding
+    var selectTab: (AppTab) -> Void
     var tabFocused: (AppTab) -> Void
 
     var body: some View {
@@ -265,7 +279,7 @@ private struct TopNavigationBar: View {
                         title: tab.title(l10n),
                         icon: tab.systemImage,
                         selected: selectedTab == tab,
-                        action: { selectedTab = tab },
+                        action: { selectTab(tab) },
                         focusedTab: focusedTab,
                         didFocus: { tabFocused(tab) }
                     )
