@@ -101,31 +101,33 @@ export class YouTubeTvService {
   async #executeRating(videoId, likeStatus, retry) {
     const client = await this.#client();
     await this.#authorize(client, false);
-    const action = {
-      LIKE: 'like',
-      DISLIKE: 'dislike',
-      INDIFFERENT: 'removeRating',
+    const endpoint = {
+      LIKE: 'like/like',
+      DISLIKE: 'like/dislike',
+      INDIFFERENT: 'like/removelike',
     }[likeStatus];
-    if (!action) {
+    if (!endpoint) {
       const error = new Error(`Unsupported like status: ${likeStatus}`);
       error.code = 'invalid_like_status';
       error.status = 400;
       throw error;
     }
 
-    const response = await client.interact[action](videoId);
-    if (response.status_code === 401 && retry) {
-      await this.#authorize(client, true);
-      return await this.#executeRating(videoId, likeStatus, false);
-    }
-    if (!response.success) {
-      const message = response.data?.error?.message
-        ?? `YouTube rating update failed with HTTP ${response.status_code}.`;
-      const error = new Error(message);
-      error.code = response.status_code === 401
-        ? 'oauth_reauthorization_required'
-        : 'youtube_rating_failed';
-      error.status = response.status_code;
+    try {
+      await client.session.http.fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: videoId, client: TV_CLIENT }),
+      });
+    } catch (cause) {
+      const status = httpStatusFromError(cause);
+      if (status === 401 && retry) {
+        await this.#authorize(client, true);
+        return await this.#executeRating(videoId, likeStatus, false);
+      }
+      const error = new Error(String(cause?.message ?? cause));
+      error.code = status === 401 ? 'oauth_reauthorization_required' : 'youtube_rating_failed';
+      error.status = status || 502;
       throw error;
     }
     return { videoId, likeStatus };
@@ -190,6 +192,13 @@ const createTvClient = async ({ fetchFunction = globalThis.fetch } = {}) => awai
   client_name: TV_SESSION_CLIENT,
   fetch: fetchFunction,
 });
+
+const httpStatusFromError = (error) => {
+  const status = Number(error?.status ?? error?.statusCode);
+  if (Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  const match = String(error?.message ?? error).match(/status(?: code)?\s+(\d{3})/i);
+  return match ? Number(match[1]) : null;
+};
 
 export const normalizeTvTile = (tile, options = {}) => normalizeTile(tile, options);
 

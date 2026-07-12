@@ -95,23 +95,15 @@ test('normalizes playlist browse ids without treating them as playable videos', 
 test('writes likes, dislikes, and rating removal through the authenticated TV client', async () => {
   const calls = [];
   const client = {
-    interact: {
-      like: async (videoId) => {
-        calls.push(['like', videoId]);
-        return successful({});
-      },
-      dislike: async (videoId) => {
-        calls.push(['dislike', videoId]);
-        return successful({});
-      },
-      removeRating: async (videoId) => {
-        calls.push(['removeRating', videoId]);
-        return successful({});
-      },
-    },
     session: {
       logged_in: false,
       oauth: { setTokens: () => {} },
+      http: {
+        fetch: async (endpoint, options) => {
+          calls.push([endpoint, JSON.parse(options.body)]);
+          return new Response(null, { status: 204 });
+        },
+      },
     },
   };
   const service = new YouTubeTvService({
@@ -127,9 +119,9 @@ test('writes likes, dislikes, and rating removal through the authenticated TV cl
   await service.setRating('abcdefghijk', 'INDIFFERENT');
 
   assert.deepEqual(calls, [
-    ['like', 'abcdefghijk'],
-    ['dislike', 'abcdefghijk'],
-    ['removeRating', 'abcdefghijk'],
+    ['like/like', { target: 'abcdefghijk', client: 'TV' }],
+    ['like/dislike', { target: 'abcdefghijk', client: 'TV' }],
+    ['like/removelike', { target: 'abcdefghijk', client: 'TV' }],
   ]);
   assert.equal(client.session.logged_in, true);
 });
