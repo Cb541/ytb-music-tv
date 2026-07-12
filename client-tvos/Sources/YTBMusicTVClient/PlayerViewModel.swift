@@ -7,6 +7,8 @@ private typealias ResolvedPlaybackMedia = (
     media: MediaItem,
     url: URL,
     fallbackURL: URL?,
+    adaptiveVideoURL: URL?,
+    adaptiveAudioURL: URL?,
     hasVideo: Bool,
     mimeType: String?
 )
@@ -550,6 +552,14 @@ final class PlayerViewModel: ObservableObject {
             }
             guard playbackRequestID == requestID else { return false }
 
+            let adaptiveItem: AVPlayerItem?
+            if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
+                adaptiveItem = try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
+            } else {
+                adaptiveItem = nil
+            }
+            guard playbackRequestID == requestID else { return false }
+
             let oldState = state
             if recordHistory, let oldID = oldState?.currentMediaId, oldID != resolved.media.id {
                 playbackHistory.append(oldID)
@@ -577,11 +587,18 @@ final class PlayerViewModel: ObservableObject {
             )
             pendingMedia = nil
 
-            configurePlayer(
-                url: resolved.url,
-                fallbackURLs: resolved.fallbackURL.map { [$0] } ?? [],
-                prefetchedAsset: prefetchedAsset
-            )
+            if let adaptiveItem {
+                configurePlayer(
+                    item: adaptiveItem,
+                    fallbackURLs: [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
+                )
+            } else {
+                configurePlayer(
+                    url: resolved.url,
+                    fallbackURLs: resolved.fallbackURL.map { [$0] } ?? [],
+                    prefetchedAsset: prefetchedAsset
+                )
+            }
             updateNowPlayingInfo()
             scheduleNextPlaybackPrecache()
             errorMessage = nil
@@ -603,15 +620,24 @@ final class PlayerViewModel: ObservableObject {
             let resolved = try await client.resolve(mediaId: videoID)
             var merged = merge(media, with: resolved.media)
             let playbackURLs = playbackURLs(for: resolved, streamMode: config?.playback.streamMode)
+            let adaptiveURLs = adaptivePlaybackURLs(for: resolved, streamMode: config?.playback.streamMode)
             let playbackURL = playbackURLs.primary
             merged.playbackUrl = playbackURL
-            return (merged, playbackURL, playbackURLs.fallback, resolved.hasVideo == true, resolved.mimeType)
+            return (
+                merged,
+                playbackURL,
+                playbackURLs.fallback,
+                adaptiveURLs?.video,
+                adaptiveURLs?.audio,
+                resolved.hasVideo == true,
+                resolved.mimeType
+            )
         }
 
         if let playbackURL = media.streamUrl ?? media.playbackUrl {
             var playable = media
             playable.playbackUrl = playbackURL
-            return (playable, playbackURL, nil, config?.playback.preferVideo == true, nil)
+            return (playable, playbackURL, nil, nil, nil, config?.playback.preferVideo == true, nil)
         }
 
         throw PlaybackError.notPlayable
@@ -628,6 +654,55 @@ final class PlayerViewModel: ObservableObject {
         } else {
             replacePlayerItem(url: url)
         }
+    }
+
+    private func configurePlayer(item: AVPlayerItem, fallbackURLs: [URL]) {
+        var seen = Set<URL>()
+        fallbackPlaybackURLs = fallbackURLs.filter { seen.insert($0).inserted }
+        replacePlayerItem(item: item)
+    }
+
+    private func makeAdaptivePlayerItem(videoURL: URL, audioURL: URL) async throws -> AVPlayerItem {
+        let videoAsset = AVURLAsset(url: videoURL)
+        let audioAsset = AVURLAsset(url: audioURL)
+        async let videoTracks = videoAsset.loadTracks(withMediaType: .video)
+        async let audioTracks = audioAsset.loadTracks(withMediaType: .audio)
+        guard let videoTrack = try await videoTracks.first,
+              let audioTrack = try await audioTracks.first else {
+            throw PlaybackError.notPlayable
+        }
+
+        async let videoRange = videoTrack.load(.timeRange)
+        async let audioRange = audioTrack.load(.timeRange)
+        let sourceVideoRange = try await videoRange
+        let sourceAudioRange = try await audioRange
+        let duration = CMTimeMinimum(sourceVideoRange.duration, sourceAudioRange.duration)
+        guard duration.isNumeric, CMTimeCompare(duration, .zero) > 0 else {
+            throw PlaybackError.notPlayable
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionVideo = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ), let compositionAudio = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw PlaybackError.notPlayable
+        }
+
+        try compositionVideo.insertTimeRange(
+            CMTimeRange(start: sourceVideoRange.start, duration: duration),
+            of: videoTrack,
+            at: .zero
+        )
+        try compositionAudio.insertTimeRange(
+            CMTimeRange(start: sourceAudioRange.start, duration: duration),
+            of: audioTrack,
+            at: .zero
+        )
+        return AVPlayerItem(asset: composition)
     }
 
     private func replacePlayerItem(url: URL) {
@@ -802,6 +877,23 @@ final class PlayerViewModel: ObservableObject {
         }
 
         return (proxyURL, directURL)
+    }
+
+    private func adaptivePlaybackURLs(
+        for resolved: ResolvedStream,
+        streamMode: String?
+    ) -> (video: URL, audio: URL)? {
+        guard let directVideo = resolved.adaptiveVideoUrl,
+              let directAudio = resolved.adaptiveAudioUrl else { return nil }
+
+        if streamMode?.lowercased() == "direct" {
+            return (directVideo, directAudio)
+        }
+        if let proxyVideo = resolved.adaptiveVideoProxyUrl,
+           let proxyAudio = resolved.adaptiveAudioProxyUrl {
+            return (proxyVideo, proxyAudio)
+        }
+        return (directVideo, directAudio)
     }
 
     private func reportPlaybackFailure(_ reason: String) {
@@ -1010,7 +1102,9 @@ final class PlayerViewModel: ObservableObject {
             guard let self else { return }
             do {
                 let resolved = try await self.resolvePlaybackMedia(nextItem, client: client)
-                let asset = await self.preloadPlaybackAsset(for: resolved.url)
+                let asset = resolved.adaptiveVideoURL == nil
+                    ? await self.preloadPlaybackAsset(for: resolved.url)
+                    : nil
                 guard !Task.isCancelled,
                       self.playbackRequestID == requestID,
                       self.nextPlaybackCandidate?.id == nextItem.id

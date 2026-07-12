@@ -23,7 +23,7 @@
 
 - 通过 `youtubei.js` 获取搜索、首页、Explore、媒体库和详情数据
 - 无状态媒体解析和支持 Range 请求的媒体代理
-- 视频优先、画质选择及音频回退
+- 视频优先、画质选择、自适应高清音视频双轨及音频回退
 - 广告域名/路径过滤和“不喜欢歌曲自动跳过”配置
 - UDP 局域网发现和持久化设备身份
 - 匿名访问公共目录；通过 Google 设备 OAuth 访问个人媒体库
@@ -182,7 +182,7 @@ Docker Compose 将 TCP `4174` 和 UDP `4175` 暴露到宿主机，并把根目�
 | `GET` | `/api/media/:videoId` | 单个媒体详情 |
 | `GET` | `/api/media/:videoId/related` | 相关内容 |
 | `GET` | `/api/resolve/:videoId` | 解析媒体流信息 |
-| `GET/HEAD` | `/api/stream/:videoId` | 支持 Range 的媒体代理 |
+| `GET/HEAD` | `/api/stream/:videoId` | 支持 Range 的媒体代理；`component=video|audio` 分别代理自适应轨道 |
 | `POST` | `/api/adblock/check` | 检查 URL 是否命中过滤规则 |
 | `GET` | `/api/proxy?url=...` | 受过滤规则保护的通用代理 |
 

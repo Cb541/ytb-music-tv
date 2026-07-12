@@ -260,19 +260,29 @@ export class YouTubeMusicService {
   }
 
   async #resolveStreamUncached(videoId, options = {}, cacheKey = streamCacheKey(videoId, options)) {
-    const info = await this.#playbackInfo(videoId);
+    const info = await this.#playbackInfo(videoId, options);
     assertPlayable(info);
 
     const selected = await this.#chooseTvOSFormat(info, options);
-    const directUrl = await this.#decipherFormat(selected);
+    const [directUrl, adaptiveVideoUrl, adaptiveAudioUrl] = await Promise.all([
+      this.#decipherFormat(selected.playback),
+      selected.video ? this.#decipherFormat(selected.video) : null,
+      selected.audio ? this.#decipherFormat(selected.audio) : null,
+    ]);
+    const presentedVideo = selected.video ?? selected.playback;
     const value = {
       videoId,
       directUrl,
-      mimeType: selected.mime_type,
-      contentLength: selected.content_length ?? null,
-      hasAudio: selected.has_audio,
-      hasVideo: selected.has_video,
-      quality: selected.quality_label ?? selected.quality ?? selected.audio_quality ?? null,
+      adaptiveVideoUrl,
+      adaptiveAudioUrl,
+      mimeType: presentedVideo.mime_type,
+      contentLength: presentedVideo.content_length ?? null,
+      hasAudio: selected.audio ? true : selected.playback.has_audio,
+      hasVideo: presentedVideo.has_video,
+      quality: presentedVideo.quality_label
+        ?? presentedVideo.quality
+        ?? presentedVideo.audio_quality
+        ?? null,
       expiresAt: new Date(Date.now() + 45 * 60 * 1000).toISOString(),
       media: normalizeTrackInfo(info),
     };
@@ -305,33 +315,35 @@ export class YouTubeMusicService {
     return await info.download(downloadOptions);
   }
 
-  async #playbackInfo(videoId) {
-    const playbackClient = await this.#playbackClient();
-    if (this.#oauthLibraryService?.authStatus().status === 'configured') {
+  async #playbackInfo(videoId, { skipOAuth = false } = {}) {
+    let fallbackInfo = null;
+    let fallbackError = null;
+    if (!skipOAuth) {
+      const playbackClient = await this.#playbackClient();
+      if (this.#oauthLibraryService?.authStatus().status === 'configured') {
+        try {
+          await this.#oauthLibraryService.authorizeSession(playbackClient);
+          const info = await playbackClient.getBasicInfo(videoId, { client: 'TV' });
+          if (isPlayable(info)) {
+            return info;
+          }
+          console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
+        } catch (error) {
+          console.warn(`OAuth TV player failed for ${videoId}: ${error?.message ?? error}`);
+        }
+      }
+
       try {
-        await this.#oauthLibraryService.authorizeSession(playbackClient);
-        const info = await playbackClient.getBasicInfo(videoId, { client: 'TV' });
+        const info = await playbackClient.music.getInfo(videoId);
         if (isPlayable(info)) {
           return info;
         }
-        console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
+        fallbackInfo = info;
+        console.warn(`music.getInfo returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}, falling back to getBasicInfo`);
       } catch (error) {
-        console.warn(`OAuth TV player failed for ${videoId}: ${error?.message ?? error}`);
+        fallbackError = error;
+        console.warn(`music.getInfo failed for ${videoId}, falling back to getBasicInfo: ${error?.message ?? error}`);
       }
-    }
-
-    let fallbackInfo = null;
-    let fallbackError = null;
-    try {
-      const info = await playbackClient.music.getInfo(videoId);
-      if (isPlayable(info)) {
-        return info;
-      }
-      fallbackInfo = info;
-      console.warn(`music.getInfo returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}, falling back to getBasicInfo`);
-    } catch (error) {
-      fallbackError = error;
-      console.warn(`music.getInfo failed for ${videoId}, falling back to getBasicInfo: ${error?.message ?? error}`);
     }
 
     const client = await this.#client();
@@ -356,9 +368,9 @@ export class YouTubeMusicService {
   async #chooseTvOSFormat(info, options) {
     const preferVideo = options.preferVideo !== false;
     const quality = options.quality ?? 'best';
-    const compatibleFormat = tvOSCompatibleFormat(info, { preferVideo });
-    if (compatibleFormat) {
-      return compatibleFormat;
+    const compatibleFormats = selectTvOSFormats(info, { preferVideo, quality });
+    if (compatibleFormats.playback) {
+      return compatibleFormats;
     }
     const attempts = preferVideo
       ? [
@@ -376,7 +388,11 @@ export class YouTubeMusicService {
     let lastError;
     for (const attempt of attempts) {
       try {
-        return info.chooseFormat(attempt);
+        return {
+          playback: info.chooseFormat(attempt),
+          video: null,
+          audio: null,
+        };
       } catch (error) {
         lastError = error;
       }
@@ -509,9 +525,9 @@ const isPlayable = (info) => {
 const streamVideoId = (media) => media?.videoId ?? media?.id ?? null;
 
 const streamCacheKey = (videoId, options = {}) =>
-  `${videoId}:${options.preferVideo ?? true}:${options.quality ?? 'best'}`;
+  `${videoId}:${options.preferVideo ?? true}:${options.quality ?? 'best'}:${options.skipOAuth === true}`;
 
-const tvOSCompatibleFormat = (info, { preferVideo }) => {
+export const selectTvOSFormats = (info, { preferVideo, quality = 'best' }) => {
   const streamingData = info?.streaming_data;
   const formats = [
     ...Array.from(streamingData?.formats ?? []),
@@ -529,10 +545,10 @@ const tvOSCompatibleFormat = (info, { preferVideo }) => {
     .sort((left, right) => (right.bitrate ?? 0) - (left.bitrate ?? 0));
 
   if (!preferVideo) {
-    return audioFormats[0] ?? null;
+    return { playback: audioFormats[0] ?? null, video: null, audio: null };
   }
 
-  const videoFormats = formats
+  const progressiveFormats = formats
     .filter((format) => {
       const mimeType = String(format?.mime_type ?? '').toLowerCase();
       return format?.has_audio === true &&
@@ -541,12 +557,48 @@ const tvOSCompatibleFormat = (info, { preferVideo }) => {
         mimeType.includes('avc1') &&
         mimeType.includes('mp4a');
     })
-    .sort((left, right) =>
-      ((right.height ?? 0) - (left.height ?? 0)) ||
-      ((right.bitrate ?? 0) - (left.bitrate ?? 0))
-    );
+    .sort(compareVideoFormats);
 
-  return videoFormats[0] ?? audioFormats[0] ?? null;
+  const adaptiveVideoFormats = formats
+    .filter((format) => {
+      const mimeType = String(format?.mime_type ?? '').toLowerCase();
+      return format?.has_video === true &&
+        format?.has_audio !== true &&
+        mimeType.startsWith('video/mp4') &&
+        mimeType.includes('avc1');
+    })
+    .sort(compareVideoFormats);
+
+  const progressive = formatForQuality(progressiveFormats, quality);
+  const adaptiveVideo = formatForQuality(adaptiveVideoFormats, quality);
+  const shouldUseAdaptive = Boolean(
+    adaptiveVideo &&
+    audioFormats[0] &&
+    (adaptiveVideo.height ?? 0) > (progressive?.height ?? 0),
+  );
+
+  return {
+    playback: progressive ?? audioFormats[0] ?? null,
+    video: shouldUseAdaptive ? adaptiveVideo : null,
+    audio: shouldUseAdaptive ? audioFormats[0] : null,
+  };
+};
+
+const compareVideoFormats = (left, right) =>
+  ((right.height ?? 0) - (left.height ?? 0)) ||
+  ((right.bitrate ?? 0) - (left.bitrate ?? 0));
+
+const formatForQuality = (formats, quality) => {
+  if (formats.length === 0) return null;
+  const maximumHeight = qualityMaximumHeight(quality);
+  return formats.find((format) => (format.height ?? 0) <= maximumHeight)
+    ?? (maximumHeight === Number.POSITIVE_INFINITY ? formats[0] : null);
+};
+
+const qualityMaximumHeight = (quality) => {
+  if (String(quality).toLowerCase() === 'bestefficiency') return 360;
+  const match = String(quality).match(/^(\d+)p$/i);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
 };
 
 const isAuthRequiredError = (error) =>

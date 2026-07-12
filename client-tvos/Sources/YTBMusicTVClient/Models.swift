@@ -108,6 +108,10 @@ struct ResolvedStream: Codable, Equatable {
     var quality: String?
     var expiresAt: String?
     var proxyUrl: URL?
+    var adaptiveVideoUrl: URL?
+    var adaptiveAudioUrl: URL?
+    var adaptiveVideoProxyUrl: URL?
+    var adaptiveAudioProxyUrl: URL?
     var media: MediaItem?
 }
 

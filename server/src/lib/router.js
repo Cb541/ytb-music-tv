@@ -228,6 +228,12 @@ export const createApiRouter = ({
         return json(res, 200, {
           ...resolved,
           proxyUrl: publicStreamUrl(baseUrl, media.id, playbackOptions),
+          adaptiveVideoProxyUrl: resolved.adaptiveVideoUrl
+            ? publicStreamUrl(baseUrl, media.id, { ...playbackOptions, component: 'video' })
+            : null,
+          adaptiveAudioProxyUrl: resolved.adaptiveAudioUrl
+            ? publicStreamUrl(baseUrl, media.id, { ...playbackOptions, component: 'audio' })
+            : null,
         }, corsHeaders());
       } catch (error) {
         return streamResolveFailure(res, error);
@@ -251,6 +257,7 @@ export const createApiRouter = ({
           config,
           youtubeService,
           playbackOptions: playbackOptionsFromRequest(url, config),
+          playbackComponent: url.searchParams.get('component'),
           fetchFunction,
         });
       } catch (error) {

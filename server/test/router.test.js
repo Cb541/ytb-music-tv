@@ -220,6 +220,8 @@ test('stream resolution is stateless and keyed by video id', async () => {
       return {
         videoId: media.videoId,
         directUrl: 'https://media.example/video.mp4',
+        adaptiveVideoUrl: 'https://media.example/video-1080.mp4',
+        adaptiveAudioUrl: 'https://media.example/audio.m4a',
         hasAudio: true,
         hasVideo: true,
       };
@@ -235,6 +237,36 @@ test('stream resolution is stateless and keyed by video id', async () => {
   const payload = JSON.parse(response.body);
   assert.equal(payload.videoId, 'video123456');
   assert.equal(payload.proxyUrl, 'http://ytb.local/api/stream/video123456?preferVideo=true&quality=best');
+  assert.equal(
+    payload.adaptiveVideoProxyUrl,
+    'http://ytb.local/api/stream/video123456?preferVideo=true&quality=best&component=video',
+  );
+  assert.equal(
+    payload.adaptiveAudioProxyUrl,
+    'http://ytb.local/api/stream/video123456?preferVideo=true&quality=best&component=audio',
+  );
+});
+
+test('media details are resolved by video id', async () => {
+  const requested = [];
+  const router = makeRouter({
+    track: async (videoId) => {
+      requested.push(videoId);
+      return {
+        id: videoId,
+        videoId,
+        title: 'Example',
+        artist: 'Artist',
+      };
+    },
+  });
+  const response = createResponse();
+
+  await router(createRequest('GET', '/api/media/video123456'), response);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(requested, ['video123456']);
+  assert.equal(JSON.parse(response.body).videoId, 'video123456');
 });
 
 test('stream resolution accepts an audio-only fallback request', async () => {
@@ -293,6 +325,41 @@ test('stream endpoint preserves requested playback preference', async () => {
   }
 });
 
+test('stream endpoint proxies adaptive video and audio components independently', async () => {
+  const restoreFetch = globalThis.fetch;
+  const fetchedUrls = [];
+  globalThis.fetch = async (url) => {
+    fetchedUrls.push(String(url));
+    return new Response('ok', { status: 200 });
+  };
+  const router = makeRouter({
+    resolveStream: async (media) => ({
+      videoId: media.videoId,
+      directUrl: 'https://media.example/progressive.mp4',
+      adaptiveVideoUrl: 'https://media.example/video-1080.mp4',
+      adaptiveAudioUrl: 'https://media.example/audio.m4a',
+      hasAudio: true,
+      hasVideo: true,
+    }),
+  });
+
+  try {
+    const video = createResponse();
+    await router(createRequest('GET', '/api/stream/video123456?component=video'), video);
+    const audio = createResponse();
+    await router(createRequest('GET', '/api/stream/video123456?component=audio'), audio);
+
+    assert.equal(video.status, 200);
+    assert.equal(audio.status, 200);
+    assert.deepEqual(fetchedUrls, [
+      'https://media.example/video-1080.mp4',
+      'https://media.example/audio.m4a',
+    ]);
+  } finally {
+    globalThis.fetch = restoreFetch;
+  }
+});
+
 test('stream endpoint refreshes failed video URLs and falls back to audio', async () => {
   const restoreFetch = globalThis.fetch;
   const fetchedUrls = [];
@@ -340,8 +407,55 @@ test('stream endpoint refreshes failed video URLs and falls back to audio', asyn
       'https://media.example/video.mp4',
       'https://media.example/audio.m4a',
     ]);
-    assert.deepEqual(resolvedOptions.map((options) => options.preferVideo), [true, false]);
-    assert.deepEqual(invalidated.map((entry) => entry.options.preferVideo), [true, false]);
+    assert.deepEqual(
+      resolvedOptions.map((options) => [options.preferVideo, options.skipOAuth === true]),
+      [[true, false], [true, false], [true, true], [false, true]],
+    );
+    assert.deepEqual(
+      invalidated.map((entry) => [entry.options.preferVideo, entry.options.skipOAuth === true]),
+      [[true, false], [true, true], [false, true]],
+    );
+  } finally {
+    globalThis.fetch = restoreFetch;
+  }
+});
+
+test('stream recovery stops after finite OAuth, anonymous, and audio attempts', async () => {
+  const restoreFetch = globalThis.fetch;
+  const fetchedUrls = [];
+  globalThis.fetch = async (url) => {
+    fetchedUrls.push(String(url));
+    return new Response('forbidden', { status: 403 });
+  };
+  let resolution = 0;
+  const router = makeRouter({
+    resolveStream: async (media, options) => {
+      resolution += 1;
+      const kind = options.preferVideo === false
+        ? 'audio-anonymous'
+        : options.skipOAuth === true ? 'video-anonymous' : 'video-oauth';
+      return {
+        videoId: media.videoId,
+        directUrl: `https://media.example/${kind}-${resolution}.mp4`,
+        hasAudio: true,
+        hasVideo: options.preferVideo !== false,
+      };
+    },
+    invalidateStream: () => true,
+  });
+
+  try {
+    const response = createResponse();
+    await router(createRequest('GET', '/api/stream/video123456'), response);
+
+    assert.equal(response.status, 403);
+    assert.equal(fetchedUrls.length, 4);
+    assert.deepEqual(fetchedUrls, [
+      'https://media.example/video-oauth-1.mp4',
+      'https://media.example/video-oauth-2.mp4',
+      'https://media.example/video-anonymous-3.mp4',
+      'https://media.example/audio-anonymous-4.mp4',
+    ]);
   } finally {
     globalThis.fetch = restoreFetch;
   }

@@ -35,6 +35,7 @@ export const streamResolvedMedia = async ({
   config,
   youtubeService,
   playbackOptions,
+  playbackComponent = null,
   fetchFunction = globalThis.fetch,
 }) => {
   if (!media) {
@@ -61,11 +62,29 @@ export const streamResolvedMedia = async ({
     quality: playbackOptions?.quality ?? config.playback.defaultQuality,
   };
   const resolved = await youtubeService.resolveStream(media, options);
+  const resolvedUrl = playbackUrlForComponent(resolved, playbackComponent);
+  if (!resolvedUrl) {
+    res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({
+      error: 'stream_component_unavailable',
+      message: `The requested ${playbackComponent} stream is unavailable.`,
+    }));
+    return;
+  }
+  const attemptedUrls = new Set([resolvedUrl]);
+  const recoveryOptions = [
+    options,
+    { ...options, skipOAuth: true },
+    ...(!playbackComponent && options.preferVideo !== false
+      ? [{ ...options, preferVideo: false, skipOAuth: true }]
+      : []),
+  ];
+  let recoveryIndex = 0;
 
   await proxyUrl({
     req,
     res,
-    url: resolved.directUrl,
+    url: resolvedUrl,
     config,
     fetchFunction,
     onUpstreamFailure: async ({ status }) => {
@@ -73,22 +92,18 @@ export const streamResolvedMedia = async ({
         return null;
       }
 
-      youtubeService.invalidateStream?.(media.videoId, options);
-      if (options.preferVideo === false) {
-        const refreshed = await youtubeService.resolveStream(media, options);
-        if (refreshed.directUrl && refreshed.directUrl !== resolved.directUrl) {
-          return refreshed.directUrl;
+      while (recoveryIndex < recoveryOptions.length) {
+        const nextOptions = recoveryOptions[recoveryIndex];
+        recoveryIndex += 1;
+        youtubeService.invalidateStream?.(media.videoId, nextOptions);
+        const next = await youtubeService.resolveStream(media, nextOptions);
+        const nextUrl = playbackUrlForComponent(next, playbackComponent);
+        if (nextUrl && !attemptedUrls.has(nextUrl)) {
+          attemptedUrls.add(nextUrl);
+          return nextUrl;
         }
-        return null;
       }
-
-      const audioOptions = {
-        ...options,
-        preferVideo: false,
-      };
-      youtubeService.invalidateStream?.(media.videoId, audioOptions);
-      const audio = await youtubeService.resolveStream(media, audioOptions);
-      return audio.directUrl ?? null;
+      return null;
     },
   });
 };
@@ -101,7 +116,16 @@ export const publicStreamUrl = (baseUrl, mediaId, options = {}) => {
   if (options.quality) {
     url.searchParams.set('quality', options.quality);
   }
+  if (options.component) {
+    url.searchParams.set('component', options.component);
+  }
   return url.toString();
+};
+
+const playbackUrlForComponent = (resolved, component) => {
+  if (component === 'video') return resolved.adaptiveVideoUrl ?? null;
+  if (component === 'audio') return resolved.adaptiveAudioUrl ?? null;
+  return resolved.directUrl ?? null;
 };
 
 const isRecoverableMediaStatus = (status) => [403, 404, 410].includes(status);
