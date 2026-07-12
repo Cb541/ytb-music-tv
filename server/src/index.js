@@ -31,7 +31,7 @@ const oauth = new GoogleOAuthClient({
 const youtubeTvService = new YouTubeTvService({
   oauth,
   fetchFunction,
-  maxItems: Number.parseInt(process.env.YTB_MUSIC_TV_LIBRARY_MAX_ITEMS ?? '200', 10),
+  maxItems: Number.parseInt(process.env.YTB_MUSIC_TV_LIBRARY_MAX_ITEMS ?? '5000', 10),
 });
 const youtubeService = new YouTubeMusicService({
   configStore,

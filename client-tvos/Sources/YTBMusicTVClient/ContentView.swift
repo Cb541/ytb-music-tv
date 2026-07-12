@@ -75,18 +75,20 @@ struct ContentView: View {
                             restoreRequestID: homeFocusRequestID
                         ) { media, queue in
                             if media.isPlayable {
-                                await MainActor.run { openPlayer() }
+                                viewModel.preparePlaybackPresentation(media)
+                                openPlayer()
                             }
-                            _ = await viewModel.selectHome(media, queue: queue)
+                            Task { _ = await viewModel.selectHome(media, queue: queue) }
                         } returnToMenu: {
                             menuFocusRequestID &+= 1
                         }
                     case .search:
                         SearchView(viewModel: viewModel, l10n: l10n) { media, queue in
                             if media.isPlayable {
-                                await MainActor.run { openPlayer() }
+                                viewModel.preparePlaybackPresentation(media)
+                                openPlayer()
                             }
-                            _ = await viewModel.selectSearch(media, queue: queue)
+                            Task { _ = await viewModel.selectSearch(media, queue: queue) }
                         } returnToMenu: {
                             menuFocusRequestID &+= 1
                         }
@@ -544,7 +546,7 @@ private struct HomeView: View {
     @ObservedObject var viewModel: PlayerViewModel
     var l10n: L10n
     var restoreRequestID: Int
-    var select: (MediaItem, [MediaItem]) async -> Void
+    var select: (MediaItem, [MediaItem]) -> Void
     var returnToMenu: () -> Void
 
     @State private var focusedSectionID: String?
@@ -636,7 +638,7 @@ private struct HomeView: View {
 
 private struct MediaCarousel: View {
     var section: MediaSection
-    var select: (MediaItem, [MediaItem]) async -> Void
+    var select: (MediaItem, [MediaItem]) -> Void
     var didFocusCard: () -> Void
 
     @FocusState private var focusedCardID: String?
@@ -648,14 +650,14 @@ private struct MediaCarousel: View {
                 .lineLimit(1)
 
             ScrollView(.horizontal) {
-                HStack(spacing: 28) {
-                    ForEach(Array(section.items.prefix(20).enumerated()), id: \.offset) { index, media in
+                LazyHStack(spacing: 28) {
+                    ForEach(Array(section.items.enumerated()), id: \.offset) { index, media in
                         let focusID = "\(section.id)-\(index)-\(media.id)"
                         MediaCard(
                             media: media,
                             focused: focusedCardID == focusID,
                             action: {
-                                await select(media, section.items.filter(\.isPlayable))
+                                select(media, section.items.filter(\.isPlayable))
                             }
                         )
                         .focused($focusedCardID, equals: focusID)
@@ -678,12 +680,10 @@ private struct MediaCarousel: View {
 private struct MediaCard: View {
     var media: MediaItem
     var focused: Bool
-    var action: () async -> Void
+    var action: () -> Void
 
     var body: some View {
-        Button {
-            Task { await action() }
-        } label: {
+        Button(action: action) {
             VStack(alignment: .leading, spacing: 12) {
                 ArtworkThumb(url: media.artworkUrl, size: 245, cornerRadius: 18)
                     .overlay(alignment: .bottomTrailing) {
@@ -730,7 +730,7 @@ private struct LoadingRow: View {
 private struct SearchView: View {
     @ObservedObject var viewModel: PlayerViewModel
     var l10n: L10n
-    var select: (MediaItem, [MediaItem]) async -> Void
+    var select: (MediaItem, [MediaItem]) -> Void
     var returnToMenu: () -> Void
 
     @State private var query = ""
@@ -800,7 +800,7 @@ private struct ScreenHeader: View {
 private struct MediaSectionList: View {
     var sections: [MediaSection]
     var l10n: L10n
-    var select: (MediaItem, [MediaItem]) async -> Void
+    var select: (MediaItem, [MediaItem]) -> Void
     var showsSectionTitle = true
 
     var body: some View {
@@ -814,10 +814,10 @@ private struct MediaSectionList: View {
                                 .lineLimit(1)
                         }
 
-                        VStack(spacing: 10) {
-                            ForEach(Array(section.items.prefix(14))) { media in
+                        LazyVStack(spacing: 10) {
+                            ForEach(section.items) { media in
                                 TrackRow(media: media) {
-                                    await select(media, section.items.filter(\.isPlayable))
+                                    select(media, section.items.filter(\.isPlayable))
                                 }
                             }
                         }
@@ -833,14 +833,12 @@ private struct MediaSectionList: View {
 
 private struct TrackRow: View {
     var media: MediaItem
-    var action: () async -> Void
+    var action: () -> Void
 
     @FocusState private var focused: Bool
 
     var body: some View {
-        Button {
-            Task { await action() }
-        } label: {
+        Button(action: action) {
             HStack(spacing: 18) {
                 ArtworkThumb(url: media.artworkUrl, size: 104, cornerRadius: 6)
 

@@ -17,12 +17,12 @@ private struct NextPlaybackCache {
     let requestID: UUID
     let mediaID: String
     let resolved: ResolvedPlaybackMedia
-    let asset: AVURLAsset?
+    let item: AVPlayerItem?
 }
 
 private struct PrefetchedPlaybackMedia {
     let resolved: ResolvedPlaybackMedia
-    let asset: AVURLAsset?
+    let item: AVPlayerItem?
 }
 
 @MainActor
@@ -76,6 +76,7 @@ final class PlayerViewModel: ObservableObject {
     private var searchRevision = 0
     private var homeNavigationHistory: [[MediaSection]] = []
     private var searchNavigationHistory: [[MediaSection]] = []
+    private var knownRatings: [String: String] = [:]
     private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
     private let artworkCache = NSCache<NSURL, UIImage>()
     private var artworkLoadTask: Task<Void, Never>?
@@ -130,6 +131,7 @@ final class PlayerViewModel: ObservableObject {
         if client?.baseURL != baseURL {
             configUpdateTask?.cancel()
             configRevision &+= 1
+            knownRatings.removeAll()
         }
         isConnecting = true
         defer {
@@ -239,7 +241,7 @@ final class PlayerViewModel: ObservableObject {
         do {
             let sections = try await client.search(query: trimmedQuery).sections
             guard revision == searchRevision else { return }
-            searchSections = sections
+            searchSections = applyingKnownRatings(to: sections)
             searchNavigationHistory.removeAll()
             errorMessage = nil
         } catch {
@@ -251,7 +253,7 @@ final class PlayerViewModel: ObservableObject {
     func loadExplore() async {
         guard let client else { return }
         do {
-            exploreSections = try await client.explore().sections
+            exploreSections = applyingKnownRatings(to: try await client.explore().sections)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -279,12 +281,16 @@ final class PlayerViewModel: ObservableObject {
             let explore = try await exploreResponse
 
             guard revision == homeLoadRevision else { return }
-            librarySections = library.sections
-            exploreSections = explore.sections
+            rememberKnownRatings(in: library.sections)
+            let ratedLibrary = applyingKnownRatings(to: library.sections)
+            let ratedHome = applyingKnownRatings(to: home.sections)
+            let ratedExplore = applyingKnownRatings(to: explore.sections)
+            librarySections = ratedLibrary
+            exploreSections = ratedExplore
             homeSections = composeHomeSections(
-                library: library.sections,
-                home: home.sections,
-                explore: explore.sections
+                library: ratedLibrary,
+                home: ratedHome,
+                explore: ratedExplore
             )
             homeNavigationHistory.removeAll()
 
@@ -299,7 +305,8 @@ final class PlayerViewModel: ObservableObject {
         guard let client else { return }
         do {
             let response = try await client.library()
-            librarySections = response.sections
+            rememberKnownRatings(in: response.sections)
+            librarySections = applyingKnownRatings(to: response.sections)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -315,6 +322,13 @@ final class PlayerViewModel: ObservableObject {
             replacingQueue: queue.isEmpty ? nil : queue.filter(\.isPlayable),
             recordHistory: true
         )
+    }
+
+    func preparePlaybackPresentation(_ media: MediaItem) {
+        guard media.isPlayable else { return }
+        pendingMedia = applyingKnownRating(to: media)
+        isPreparingPlayback = true
+        errorMessage = nil
     }
 
     func selectSearch(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
@@ -509,7 +523,7 @@ final class PlayerViewModel: ObservableObject {
 
         do {
             let response = try await client.browse(media: media)
-            assignSections(response.sections)
+            assignSections(applyingKnownRatings(to: response.sections))
             errorMessage = response.sections.isEmpty
                 ? response.message ?? "No playable items found."
                 : nil
@@ -527,6 +541,10 @@ final class PlayerViewModel: ObservableObject {
         prefetched: PrefetchedPlaybackMedia? = nil
     ) async -> Bool {
         guard let client else {
+            if pendingMedia?.id == media.id {
+                pendingMedia = nil
+                isPreparingPlayback = false
+            }
             errorMessage = "Connect to the YTB Music TV server before starting playback."
             return false
         }
@@ -542,21 +560,23 @@ final class PlayerViewModel: ObservableObject {
 
         do {
             let resolved: ResolvedPlaybackMedia
-            let prefetchedAsset: AVURLAsset?
+            let prefetchedItem: AVPlayerItem?
             if let prefetched, prefetched.resolved.media.id == media.id {
                 resolved = prefetched.resolved
-                prefetchedAsset = prefetched.asset
+                prefetchedItem = prefetched.item
             } else {
                 resolved = try await resolvePlaybackMedia(media, client: client)
-                prefetchedAsset = nil
+                prefetchedItem = nil
             }
             guard playbackRequestID == requestID else { return false }
 
-            let adaptiveItem: AVPlayerItem?
-            if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
-                adaptiveItem = try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
+            let preparedItem: AVPlayerItem?
+            if let prefetchedItem {
+                preparedItem = prefetchedItem
+            } else if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
+                preparedItem = try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
             } else {
-                adaptiveItem = nil
+                preparedItem = nil
             }
             guard playbackRequestID == requestID else { return false }
 
@@ -587,16 +607,18 @@ final class PlayerViewModel: ObservableObject {
             )
             pendingMedia = nil
 
-            if let adaptiveItem {
+            if let preparedItem {
+                let adaptiveFallbacks = resolved.adaptiveVideoURL != nil
+                    ? [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
+                    : resolved.fallbackURL.map { [$0] } ?? []
                 configurePlayer(
-                    item: adaptiveItem,
-                    fallbackURLs: [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
+                    item: preparedItem,
+                    fallbackURLs: adaptiveFallbacks
                 )
             } else {
                 configurePlayer(
                     url: resolved.url,
-                    fallbackURLs: resolved.fallbackURL.map { [$0] } ?? [],
-                    prefetchedAsset: prefetchedAsset
+                    fallbackURLs: resolved.fallbackURL.map { [$0] } ?? []
                 )
             }
             updateNowPlayingInfo()
@@ -645,15 +667,10 @@ final class PlayerViewModel: ObservableObject {
 
     private func configurePlayer(
         url: URL,
-        fallbackURLs: [URL],
-        prefetchedAsset: AVURLAsset? = nil
+        fallbackURLs: [URL]
     ) {
         fallbackPlaybackURLs = fallbackURLs
-        if let prefetchedAsset, prefetchedAsset.url == url {
-            replacePlayerItem(asset: prefetchedAsset)
-        } else {
-            replacePlayerItem(url: url)
-        }
+        replacePlayerItem(url: url)
     }
 
     private func configurePlayer(item: AVPlayerItem, fallbackURLs: [URL]) {
@@ -707,10 +724,6 @@ final class PlayerViewModel: ObservableObject {
 
     private func replacePlayerItem(url: URL) {
         replacePlayerItem(item: AVPlayerItem(url: url))
-    }
-
-    private func replacePlayerItem(asset: AVURLAsset) {
-        replacePlayerItem(item: AVPlayerItem(asset: asset))
     }
 
     private func replacePlayerItem(item: AVPlayerItem) {
@@ -906,12 +919,45 @@ final class PlayerViewModel: ObservableObject {
     private func updateLikeStatus(_ likeStatus: String) {
         guard var nextState = state, var media = nextState.currentMedia else { return }
         media.likeStatus = likeStatus
+        knownRatings[ratingKey(for: media)] = likeStatus
         nextState.currentMedia = media
-        if let index = nextState.queue.firstIndex(where: { $0.id == media.id }) {
-            nextState.queue[index] = media
-        }
+        nextState.queue = applyingKnownRatings(to: nextState.queue)
         state = nextState
+        searchSections = applyingKnownRatings(to: searchSections)
+        homeSections = applyingKnownRatings(to: homeSections)
+        exploreSections = applyingKnownRatings(to: exploreSections)
+        librarySections = applyingKnownRatings(to: librarySections)
+        searchNavigationHistory = searchNavigationHistory.map(applyingKnownRatings(to:))
+        homeNavigationHistory = homeNavigationHistory.map(applyingKnownRatings(to:))
         updateNowPlayingInfo()
+    }
+
+    private func ratingKey(for media: MediaItem) -> String {
+        media.videoId ?? media.id
+    }
+
+    private func rememberKnownRatings(in sections: [MediaSection]) {
+        for media in sections.flatMap(\.items)
+            where media.likeStatus == "LIKE" || media.likeStatus == "DISLIKE" {
+            knownRatings[ratingKey(for: media)] = media.likeStatus
+        }
+    }
+
+    private func applyingKnownRating(to media: MediaItem) -> MediaItem {
+        guard let likeStatus = knownRatings[ratingKey(for: media)] else { return media }
+        var rated = media
+        rated.likeStatus = likeStatus
+        return rated
+    }
+
+    private func applyingKnownRatings(to items: [MediaItem]) -> [MediaItem] {
+        items.map(applyingKnownRating(to:))
+    }
+
+    private func applyingKnownRatings(to sections: [MediaSection]) -> [MediaSection] {
+        sections.map { section in
+            MediaSection(id: section.id, title: section.title, items: applyingKnownRatings(to: section.items))
+        }
     }
 
     private func setCurrentRating(_ likeStatus: String) async {
@@ -1102,9 +1148,7 @@ final class PlayerViewModel: ObservableObject {
             guard let self else { return }
             do {
                 let resolved = try await self.resolvePlaybackMedia(nextItem, client: client)
-                let asset = resolved.adaptiveVideoURL == nil
-                    ? await self.preloadPlaybackAsset(for: resolved.url)
-                    : nil
+                let item = await self.preparePlayerItem(for: resolved)
                 guard !Task.isCancelled,
                       self.playbackRequestID == requestID,
                       self.nextPlaybackCandidate?.id == nextItem.id
@@ -1114,7 +1158,7 @@ final class PlayerViewModel: ObservableObject {
                     requestID: requestID,
                     mediaID: nextItem.id,
                     resolved: resolved,
-                    asset: asset
+                    item: item
                 )
             } catch {
                 guard !Task.isCancelled,
@@ -1126,13 +1170,17 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    private func preloadPlaybackAsset(for url: URL) async -> AVURLAsset? {
-        let asset = AVURLAsset(url: url)
+    private func preparePlayerItem(for resolved: ResolvedPlaybackMedia) async -> AVPlayerItem? {
+        if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
+            return try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
+        }
+
+        let asset = AVURLAsset(url: resolved.url)
         do {
             let isPlayable = try await asset.load(.isPlayable)
             guard isPlayable else { return nil }
             _ = try? await asset.load(.duration)
-            return asset
+            return AVPlayerItem(asset: asset)
         } catch {
             return nil
         }
@@ -1164,7 +1212,7 @@ final class PlayerViewModel: ObservableObject {
               cache.requestID == playbackRequestID,
               cache.mediaID == media.id
         else { return nil }
-        return PrefetchedPlaybackMedia(resolved: cache.resolved, asset: cache.asset)
+        return PrefetchedPlaybackMedia(resolved: cache.resolved, item: cache.item)
     }
 
     private func nextQueueItem(
@@ -1227,6 +1275,9 @@ private func merge(_ original: MediaItem, with resolved: MediaItem?) -> MediaIte
     resolved.artworkUrl = resolved.artworkUrl ?? original.artworkUrl
     resolved.sourceUrl = resolved.sourceUrl ?? original.sourceUrl
     resolved.tags = resolved.tags.isEmpty ? original.tags : resolved.tags
+    if resolved.likeStatus == "INDIFFERENT", original.likeStatus != "INDIFFERENT" {
+        resolved.likeStatus = original.likeStatus
+    }
     return resolved
 }
 

@@ -14,7 +14,7 @@ export class YouTubeTvService {
   constructor({
     oauth,
     clientFactory = createTvClient,
-    maxItems = 200,
+    maxItems = 5000,
     fetchFunction = globalThis.fetch,
   }) {
     this.#oauth = oauth;
@@ -32,22 +32,22 @@ export class YouTubeTvService {
   }
 
   async library() {
-    const responses = await Promise.all(MUSIC_LIBRARY_TABS.map(async (tab) => ({
-      ...tab,
-      response: await this.#browse(tab.browseId),
-    })));
+    const responses = await Promise.all(MUSIC_LIBRARY_TABS.map(async (tab) => {
+      const response = await this.#browse(tab.browseId);
+      const grid = selectedTabGrid(response, tab.browseId);
+      return {
+        ...tab,
+        items: await this.#collectContinuationItems(grid),
+      };
+    }));
     const sections = responses
-      .map(({ id, title, browseId, response, likeStatus }) => {
-        const grid = selectedTabGrid(response, browseId);
-        return {
-          id,
-          title,
-          items: Array.from(grid?.items ?? [])
-            .slice(0, this.#maxItems)
-            .map((entry) => normalizeTile(entry?.tileRenderer, { likeStatus }))
-            .filter(Boolean),
-        };
-      })
+      .map(({ id, title, items, likeStatus }) => ({
+        id,
+        title,
+        items: items
+          .map((entry) => normalizeTile(entry?.tileRenderer, { likeStatus }))
+          .filter(Boolean),
+      }))
       .filter((section) => section.items.length > 0);
 
     return {
@@ -63,21 +63,12 @@ export class YouTubeTvService {
     const response = await this.#browse(browseId);
     const metadata = firstRenderer(response, 'entityMetadataRenderer');
     const list = firstRenderer(response, 'playlistVideoListRenderer');
-    const items = Array.from(list?.contents ?? []);
-    let continuation = continuationToken(list);
-
-    while (continuation && items.length < this.#maxItems) {
-      const next = await this.#browseContinuation(continuation);
-      const continuedList = firstContinuationList(next);
-      items.push(...Array.from(continuedList?.contents ?? []));
-      continuation = continuationToken(continuedList);
-    }
+    const items = await this.#collectContinuationItems(list);
 
     return {
       id: browseId,
       title: textOf(metadata?.title) || browseId,
       items: items
-        .slice(0, this.#maxItems)
         .map((item) => normalizeTile(item?.tileRenderer, {
           likeStatus: browseId === 'VLLL' || browseId === 'VLLM' ? 'LIKE' : 'INDIFFERENT',
         }))
@@ -139,6 +130,22 @@ export class YouTubeTvService {
 
   async #browseContinuation(token, retry = true) {
     return await this.#execute({ token }, retry);
+  }
+
+  async #collectContinuationItems(renderer) {
+    const items = contentItems(renderer);
+    let continuation = continuationToken(renderer);
+    const seenContinuations = new Set();
+
+    while (continuation && !seenContinuations.has(continuation) && items.length < this.#maxItems) {
+      seenContinuations.add(continuation);
+      const next = await this.#browseContinuation(continuation);
+      const continued = firstContinuationCollection(next);
+      if (!continued) break;
+      items.push(...contentItems(continued));
+      continuation = continuationToken(continued);
+    }
+    return items.slice(0, this.#maxItems);
   }
 
   async #execute(payload, retry) {
@@ -275,13 +282,30 @@ const visit = (value, callback) => {
   }
 };
 
-const firstContinuationList = (response) => {
+const firstContinuationCollection = (response) => {
   const continuationContents = response?.continuationContents;
-  if (!continuationContents) return null;
-  return Object.values(continuationContents).find((value) => Array.isArray(value?.contents)) ?? null;
+  if (continuationContents) {
+    const collection = Object.values(continuationContents).find((value) =>
+      Array.isArray(value?.contents) || Array.isArray(value?.items));
+    if (collection) return collection;
+  }
+  const append = firstRenderer(response, 'appendContinuationItemsAction');
+  return Array.isArray(append?.continuationItems)
+    ? { items: append.continuationItems }
+    : null;
 };
 
-const continuationToken = (renderer) => renderer?.continuations?.[0]?.nextContinuationData?.continuation ?? null;
+const rendererItems = (renderer) => Array.from(renderer?.items ?? renderer?.contents ?? []);
+
+const contentItems = (renderer) => rendererItems(renderer)
+  .filter((item) => !item?.continuationItemRenderer);
+
+const continuationToken = (renderer) =>
+  renderer?.continuations?.[0]?.nextContinuationData?.continuation
+  ?? rendererItems(renderer)
+    .map((item) => item?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token)
+    .find(Boolean)
+  ?? null;
 
 const playlistBrowseId = (playlistId) => {
   const id = String(playlistId ?? '');

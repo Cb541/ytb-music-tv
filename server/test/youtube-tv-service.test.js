@@ -84,6 +84,46 @@ test('loads playlist continuations and normalizes TV tiles', async () => {
   assert.equal(requests[1].token, 'next-page');
 });
 
+test('loads grid continuations for every Library tab', async () => {
+  const requests = [];
+  const client = fakeClient((payload) => {
+    requests.push(payload);
+    if (payload.token === 'liked-next-page') {
+      return successful({
+        continuationContents: {
+          gridContinuation: {
+            items: [videoTile('lmnopqrstuv', 'Second liked song', 'Second artist')],
+          },
+        },
+      });
+    }
+
+    const items = {
+      FEmusic_last_played: [],
+      FEmusic_liked_playlists: [],
+      FEmusic_liked_albums: [],
+      FEmusic_liked_videos: [
+        videoTile('abcdefghijk', 'First liked song', 'First artist'),
+        continuationItem('liked-next-page'),
+      ],
+      FEmusic_library_corpus_artists: [],
+    }[payload.browseId];
+    assert.ok(items, `unexpected payload: ${JSON.stringify(payload)}`);
+    return successful(musicPage(payload.browseId, items));
+  });
+  const service = new YouTubeTvService({
+    oauth: fakeOAuth(),
+    clientFactory: async () => client,
+  });
+
+  const library = await service.library();
+  const songs = library.sections.find((section) => section.id === 'music-songs');
+
+  assert.deepEqual(songs.items.map((item) => item.videoId), ['abcdefghijk', 'lmnopqrstuv']);
+  assert.ok(songs.items.every((item) => item.likeStatus === 'LIKE'));
+  assert.equal(requests.filter((request) => request.token === 'liked-next-page').length, 1);
+});
+
 test('normalizes playlist browse ids without treating them as playable videos', () => {
   const item = normalizeTvTile(playlistTile('VLPL123', 'Road trip').tileRenderer);
   assert.equal(item.videoId, null);
@@ -223,5 +263,11 @@ const playlistTile = (browseId, title) => ({
     onSelectCommand: { browseEndpoint: { browseId } },
     contentId: browseId.replace(/^VL/, ''),
     contentType: 'TILE_CONTENT_TYPE_PLAYLIST',
+  },
+});
+
+const continuationItem = (token) => ({
+  continuationItemRenderer: {
+    continuationEndpoint: { continuationCommand: { token } },
   },
 });

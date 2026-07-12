@@ -155,7 +155,7 @@ Docker Compose 运行时，首次启动同样会在服务日志中显示验证�
 | `YTB_MUSIC_TV_SERVER_NAME` | 当前主机名 | 客户端显示的服务端名称 |
 | `YTB_MUSIC_TV_OAUTH_CLIENT_ID` | 自动发现 | 可选的 OAuth Client ID 覆盖 |
 | `YTB_MUSIC_TV_OAUTH_CLIENT_SECRET` | 自动发现 | 可选的 OAuth Client Secret 覆盖 |
-| `YTB_MUSIC_TV_LIBRARY_MAX_ITEMS` | `200` | 每类官方 Library 内容的最大条数 |
+| `YTB_MUSIC_TV_LIBRARY_MAX_ITEMS` | `5000` | 每类官方 Library 内容的最大条数 |
 | `YTB_MUSIC_TV_PROXY_URL` | 空 | 出站 HTTP/SOCKS 代理 URL，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080` |
 | `YTB_MUSIC_TV_NO_PROXY` | `localhost,127.0.0.1,::1` | 不走出站代理的主机名列表，逗号分隔 |
 | `YTB_MUSIC_TV_UID` | `1000` | Docker 容器内服务进程运行 UID；辅助脚本自动使用当前用户 |
