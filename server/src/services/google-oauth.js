@@ -3,8 +3,9 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 const YOUTUBE_DEVICE_GRANT_TYPE = 'http://oauth.net/grant_type/device/1.0';
 const REFRESH_GRANT_TYPE = 'refresh_token';
-const DEFAULT_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
-const YOUTUBE_TV_SCOPE = 'https://www.googleapis.com/auth/youtube';
+const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+const DEFAULT_SCOPE = 'https://www.googleapis.com/auth/youtube';
+const YOUTUBE_TV_SCOPE = DEFAULT_SCOPE;
 const REFRESH_MARGIN_MS = 60_000;
 const YOUTUBE_TV_URL = 'https://www.youtube.com/tv';
 const YOUTUBE_TV_USER_AGENT = 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version';
@@ -341,4 +342,4 @@ const findTvScript = (page) => page.match(
   /<script\s+src=["']([^"']+)["']\s+id=["']base-js["'][^>]*><\/script>/i,
 )?.[1] ?? null;
 
-export const GOOGLE_YOUTUBE_READONLY_SCOPE = DEFAULT_SCOPE;
+export const GOOGLE_YOUTUBE_READONLY_SCOPE = YOUTUBE_READONLY_SCOPE;

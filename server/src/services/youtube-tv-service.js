@@ -2,6 +2,7 @@ import { Innertube, UniversalCache } from 'youtubei.js';
 
 const TV_CLIENT = 'TV';
 const TV_SESSION_CLIENT = 'TVHTML5';
+const YOUTUBE_WRITE_SCOPE = 'https://www.googleapis.com/auth/youtube';
 
 export class YouTubeTvService {
   #oauth;
@@ -82,6 +83,52 @@ export class YouTubeTvService {
         }))
         .filter(Boolean),
     };
+  }
+
+  async setRating(videoId, likeStatus) {
+    const scope = this.#oauth.status().scope;
+    if (scope && !String(scope).split(/\s+/).includes(YOUTUBE_WRITE_SCOPE)) {
+      const error = new Error(
+        'Google OAuth authorization is read-only. Run the OAuth login command again to enable ratings.',
+      );
+      error.code = 'oauth_write_scope_required';
+      error.status = 403;
+      throw error;
+    }
+    return await this.#executeRating(videoId, likeStatus, true);
+  }
+
+  async #executeRating(videoId, likeStatus, retry) {
+    const client = await this.#client();
+    await this.#authorize(client, false);
+    const action = {
+      LIKE: 'like',
+      DISLIKE: 'dislike',
+      INDIFFERENT: 'removeRating',
+    }[likeStatus];
+    if (!action) {
+      const error = new Error(`Unsupported like status: ${likeStatus}`);
+      error.code = 'invalid_like_status';
+      error.status = 400;
+      throw error;
+    }
+
+    const response = await client.interact[action](videoId);
+    if (response.status_code === 401 && retry) {
+      await this.#authorize(client, true);
+      return await this.#executeRating(videoId, likeStatus, false);
+    }
+    if (!response.success) {
+      const message = response.data?.error?.message
+        ?? `YouTube rating update failed with HTTP ${response.status_code}.`;
+      const error = new Error(message);
+      error.code = response.status_code === 401
+        ? 'oauth_reauthorization_required'
+        : 'youtube_rating_failed';
+      error.status = response.status_code;
+      throw error;
+    }
+    return { videoId, likeStatus };
   }
 
   async #browse(browseId, retry = true) {

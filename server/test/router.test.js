@@ -166,6 +166,50 @@ test('legacy server-owned playback endpoints are no longer exposed', async () =>
   }
 });
 
+test('YouTube rating updates require pairing and forward the requested status', async () => {
+  const updates = [];
+  const store = createConfigStore();
+  const router = makeRouter({
+    setRating: async (videoId, likeStatus) => {
+      updates.push({ videoId, likeStatus });
+      return { videoId, likeStatus };
+    },
+  }, store);
+
+  const anonymous = createResponse();
+  await router(
+    createRequest('PUT', '/api/media/abcdefghijk/rating', { likeStatus: 'LIKE' }),
+    anonymous,
+  );
+  assert.equal(anonymous.status, 403);
+
+  const pairing = createResponse();
+  await router(
+    createRequest('POST', '/api/pair', { name: 'Living Room', deviceCode: '123456' }),
+    pairing,
+  );
+  const token = JSON.parse(pairing.body).token;
+
+  const invalid = createResponse();
+  await router(
+    createRequest('PUT', '/api/media/abcdefghijk/rating', { likeStatus: 'favorite' }, token),
+    invalid,
+  );
+  assert.equal(invalid.status, 400);
+
+  const response = createResponse();
+  await router(
+    createRequest('PUT', '/api/media/abcdefghijk/rating', { likeStatus: 'dislike' }, token),
+    response,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    videoId: 'abcdefghijk',
+    likeStatus: 'DISLIKE',
+  });
+  assert.deepEqual(updates, [{ videoId: 'abcdefghijk', likeStatus: 'DISLIKE' }]);
+});
+
 test('stream resolution is stateless and keyed by video id', async () => {
   let resolvedMedia;
   let resolvedOptions;

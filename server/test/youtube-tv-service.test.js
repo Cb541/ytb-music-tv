@@ -92,6 +92,68 @@ test('normalizes playlist browse ids without treating them as playable videos', 
   assert.equal(item.type, 'playlist');
 });
 
+test('writes likes, dislikes, and rating removal through the authenticated TV client', async () => {
+  const calls = [];
+  const client = {
+    interact: {
+      like: async (videoId) => {
+        calls.push(['like', videoId]);
+        return successful({});
+      },
+      dislike: async (videoId) => {
+        calls.push(['dislike', videoId]);
+        return successful({});
+      },
+      removeRating: async (videoId) => {
+        calls.push(['removeRating', videoId]);
+        return successful({});
+      },
+    },
+    session: {
+      logged_in: false,
+      oauth: { setTokens: () => {} },
+    },
+  };
+  const service = new YouTubeTvService({
+    oauth: fakeOAuth(),
+    clientFactory: async () => client,
+  });
+
+  assert.deepEqual(await service.setRating('abcdefghijk', 'LIKE'), {
+    videoId: 'abcdefghijk',
+    likeStatus: 'LIKE',
+  });
+  await service.setRating('abcdefghijk', 'DISLIKE');
+  await service.setRating('abcdefghijk', 'INDIFFERENT');
+
+  assert.deepEqual(calls, [
+    ['like', 'abcdefghijk'],
+    ['dislike', 'abcdefghijk'],
+    ['removeRating', 'abcdefghijk'],
+  ]);
+  assert.equal(client.session.logged_in, true);
+});
+
+test('rejects rating updates made with legacy read-only OAuth credentials', async () => {
+  const service = new YouTubeTvService({
+    oauth: {
+      ...fakeOAuth(),
+      status: () => ({
+        status: 'configured',
+        scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      }),
+    },
+    clientFactory: async () => {
+      throw new Error('client should not be created');
+    },
+  });
+
+  await assert.rejects(
+    service.setRating('abcdefghijk', 'LIKE'),
+    (error) => error.code === 'oauth_write_scope_required' && error.status === 403,
+  );
+});
+
 const fakeOAuth = () => ({
   status: () => ({
     status: 'configured',

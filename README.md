@@ -120,7 +120,7 @@ YTB Music TV device code: 123456
 
 ## Google OAuth 登录（推荐）
 
-个人歌曲、播放列表、专辑、艺人和再次收听内容通过带 OAuth Bearer token 的 YouTube TV Music surfaces 获取。服务端会动态发现 YouTube TV 使用的 OAuth Client，不要求用户创建 Google Cloud 项目或 Client ID，也不依赖该共享 Client 无法启用的 YouTube Data API。该兼容模式会申请 `youtube` scope；环境变量 `YTB_MUSIC_TV_OAUTH_CLIENT_ID` 和 `YTB_MUSIC_TV_OAUTH_CLIENT_SECRET` 仅用于需要固定自有 Client 时覆盖自动发现结果，并默认申请只读 scope。
+个人歌曲、播放列表、专辑、艺人和再次收听内容通过带 OAuth Bearer token 的 YouTube TV Music surfaces 获取。服务端会动态发现 YouTube TV 使用的 OAuth Client，不要求用户创建 Google Cloud 项目或 Client ID，也不依赖该共享 Client 无法启用的 YouTube Data API。自动发现和环境变量覆盖的 OAuth Client 都会申请 `youtube` scope，以支持同步点赞、点踩和取消评价。已有只读凭据需要重新运行 OAuth 登录命令授权。
 
 服务端启动后如果还没有 OAuth token，会自动输出 Google 验证地址和设备码，并在后台等待授权完成。要替换当前 OAuth token，也可以在服务端目录重新执行设备登录命令：
 

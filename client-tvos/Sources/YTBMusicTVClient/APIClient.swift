@@ -51,6 +51,13 @@ struct APIClient {
         try await post("/api/browse", body: BrowseRequest(media: media))
     }
 
+    func setRating(mediaId: String, likeStatus: String) async throws -> RatingResult {
+        try await put(
+            "/api/media/\(mediaId)/rating",
+            body: RatingRequest(likeStatus: likeStatus)
+        )
+    }
+
     func resolve(mediaId: String, preferVideo: Bool? = nil) async throws -> ResolvedStream {
         try await get(
             "/api/resolve/\(mediaId)",
@@ -86,6 +93,16 @@ struct APIClient {
         return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
     }
 
+    private func put<T: Decodable, Body: Encodable>(_ path: String, body: Body) async throws -> T {
+        var request = request(path)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONEncoder.ytbMusicTV.encode(body)
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+    }
+
     private func request(_ path: String, queryItems: [URLQueryItem] = []) -> URLRequest {
         var request = URLRequest(url: url(path, queryItems: queryItems))
         if let accessToken, !accessToken.isEmpty {
@@ -105,10 +122,19 @@ struct APIClient {
             throw APIError.invalidResponse
         }
         guard (200 ..< 300).contains(http.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "HTTP \(http.statusCode)"
+            let payload = try? JSONDecoder().decode(APIErrorPayload.self, from: data)
+            let message = payload?.message
+                ?? payload?.error
+                ?? String(data: data, encoding: .utf8)
+                ?? "HTTP \(http.statusCode)"
             throw APIError.http(status: http.statusCode, message: message)
         }
     }
+}
+
+private struct APIErrorPayload: Decodable {
+    var error: String?
+    var message: String?
 }
 
 private struct BrowseRequest: Encodable {
@@ -118,6 +144,10 @@ private struct BrowseRequest: Encodable {
 private struct PairingRequest: Encodable {
     var name: String
     var deviceCode: String
+}
+
+private struct RatingRequest: Encodable {
+    var likeStatus: String
 }
 
 enum APIError: LocalizedError {

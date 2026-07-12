@@ -110,3 +110,8 @@ struct ResolvedStream: Codable, Equatable {
     var proxyUrl: URL?
     var media: MediaItem?
 }
+
+struct RatingResult: Codable, Equatable {
+    var videoId: String
+    var likeStatus: String
+}

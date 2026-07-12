@@ -54,63 +54,66 @@ struct ContentView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
 
+                AppShell(
+                    selectedTab: $selectedTab,
+                    viewModel: viewModel,
+                    l10n: l10n,
+                    openPlayer: openPlayer,
+                    focusRequestID: menuFocusRequestID,
+                    selectTab: selectTab,
+                    tabFocused: { tab in
+                        if tab == .home {
+                            homeFocusRequestID &+= 1
+                        }
+                    }
+                ) {
+                    switch selectedTab {
+                    case .home:
+                        HomeView(
+                            viewModel: viewModel,
+                            l10n: l10n,
+                            restoreRequestID: homeFocusRequestID
+                        ) { media, queue in
+                            if media.isPlayable {
+                                await MainActor.run { openPlayer() }
+                            }
+                            _ = await viewModel.selectHome(media, queue: queue)
+                        } returnToMenu: {
+                            menuFocusRequestID &+= 1
+                        }
+                    case .search:
+                        SearchView(viewModel: viewModel, l10n: l10n) { media, queue in
+                            if media.isPlayable {
+                                await MainActor.run { openPlayer() }
+                            }
+                            _ = await viewModel.selectSearch(media, queue: queue)
+                        } returnToMenu: {
+                            menuFocusRequestID &+= 1
+                        }
+                    case .settings:
+                        SettingsView(
+                            settings: settings,
+                            discovery: discovery,
+                            viewModel: viewModel,
+                            l10n: l10n,
+                            returnToMenu: { menuFocusRequestID &+= 1 }
+                        )
+                    }
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+                .opacity(showingPlayer ? 0 : 1)
+                .disabled(showingPlayer)
+                .allowsHitTesting(!showingPlayer)
+                .accessibilityHidden(showingPlayer)
+
                 if showingPlayer {
                     PlayerScreen(
                         viewModel: viewModel,
                         l10n: l10n,
-                        onBack: returnHomeFromPlayer
+                        onBack: returnFromPlayer
                     )
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .transition(.opacity.combined(with: .scale(scale: 1.015)))
-                } else {
-                    AppShell(
-                        selectedTab: $selectedTab,
-                        viewModel: viewModel,
-                        l10n: l10n,
-                        openPlayer: openPlayer,
-                        focusRequestID: menuFocusRequestID,
-                        selectTab: selectTab,
-                        tabFocused: { tab in
-                            if tab == .home {
-                                homeFocusRequestID &+= 1
-                            }
-                        }
-                    ) {
-                        switch selectedTab {
-                        case .home:
-                            HomeView(
-                                viewModel: viewModel,
-                                l10n: l10n,
-                                restoreRequestID: homeFocusRequestID
-                            ) { media, queue in
-                                if media.isPlayable {
-                                    await MainActor.run { openPlayer() }
-                                }
-                                _ = await viewModel.selectHome(media, queue: queue)
-                            } returnToMenu: {
-                                menuFocusRequestID &+= 1
-                            }
-                        case .search:
-                            SearchView(viewModel: viewModel, l10n: l10n) { media, queue in
-                                if media.isPlayable {
-                                    await MainActor.run { openPlayer() }
-                                }
-                                _ = await viewModel.selectSearch(media, queue: queue)
-                            } returnToMenu: {
-                                menuFocusRequestID &+= 1
-                            }
-                        case .settings:
-                            SettingsView(
-                                settings: settings,
-                                discovery: discovery,
-                                viewModel: viewModel,
-                                l10n: l10n,
-                                returnToMenu: { menuFocusRequestID &+= 1 }
-                            )
-                        }
-                    }
-                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-                    .transition(.opacity)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -172,13 +175,10 @@ struct ContentView: View {
         }
     }
 
-    private func returnHomeFromPlayer() {
+    private func returnFromPlayer() {
         viewModel.cancelPendingPlayback()
-        viewModel.resetHomeNavigation()
         withAnimation(.easeInOut(duration: 0.22)) {
             showingPlayer = false
-            selectedTab = .home
-            homeFocusRequestID &+= 1
         }
     }
 
@@ -992,6 +992,16 @@ private struct PlayerScreen: View {
                     .zIndex(5)
                 }
 
+                #if os(tvOS)
+                    if !controlsVisible, viewModel.state?.currentMedia != nil {
+                        HiddenPlayerRemoteObserver(
+                            onActivity: registerActivity,
+                            onExit: onBack
+                        )
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .zIndex(6)
+                    }
+                #endif
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
@@ -1190,6 +1200,79 @@ private struct PlayerControlsOverlay: View {
             layer as! AVPlayerLayer
         }
     }
+
+    private struct HiddenPlayerRemoteObserver: UIViewControllerRepresentable {
+        var onActivity: () -> Void
+        var onExit: () -> Void
+
+        func makeCoordinator() -> Coordinator {
+            Coordinator(onActivity: onActivity, onExit: onExit)
+        }
+
+        func makeUIViewController(context: Context) -> HiddenPlayerRemoteViewController {
+            let controller = HiddenPlayerRemoteViewController()
+            update(controller, coordinator: context.coordinator)
+            DispatchQueue.main.async {
+                controller.becomeFirstResponder()
+            }
+            return controller
+        }
+
+        func updateUIViewController(_ controller: HiddenPlayerRemoteViewController, context: Context) {
+            update(controller, coordinator: context.coordinator)
+            DispatchQueue.main.async {
+                controller.becomeFirstResponder()
+            }
+        }
+
+        static func dismantleUIViewController(
+            _ controller: HiddenPlayerRemoteViewController,
+            coordinator _: Coordinator
+        ) {
+            controller.resignFirstResponder()
+        }
+
+        private func update(_ controller: HiddenPlayerRemoteViewController, coordinator: Coordinator) {
+            coordinator.onActivity = onActivity
+            coordinator.onExit = onExit
+            controller.coordinator = coordinator
+        }
+
+        final class Coordinator {
+            var onActivity: () -> Void
+            var onExit: () -> Void
+
+            init(onActivity: @escaping () -> Void, onExit: @escaping () -> Void) {
+                self.onActivity = onActivity
+                self.onExit = onExit
+            }
+        }
+    }
+
+    private final class HiddenPlayerRemoteViewController: UIViewController {
+        var coordinator: HiddenPlayerRemoteObserver.Coordinator?
+
+        override var canBecomeFirstResponder: Bool { true }
+
+        override func loadView() {
+            let view = UIView()
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = true
+            self.view = view
+        }
+
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            if presses.contains(where: { $0.type == .menu }) {
+                coordinator?.onExit()
+                return
+            }
+
+            if presses.contains(where: { $0.type != .menu }) {
+                coordinator?.onActivity()
+            }
+            super.pressesBegan(presses, with: event)
+        }
+    }
 #endif
 
 private struct PlayerArtworkSurface: View {
@@ -1251,6 +1334,26 @@ private struct PlayerControls: View {
             ) {
                 Task { await viewModel.toggleRepeatOne() }
             }
+
+            ControlButton(
+                icon: viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "hand.thumbsup.fill" : "hand.thumbsup",
+                label: l10n.text("player.like"),
+                active: viewModel.state?.currentMedia?.likeStatus == "LIKE",
+                activeColor: .green
+            ) {
+                Task { await viewModel.likeCurrent() }
+            }
+            .disabled(viewModel.isUpdatingRating)
+
+            ControlButton(
+                icon: viewModel.state?.currentMedia?.likeStatus == "DISLIKE" ? "hand.thumbsdown.fill" : "hand.thumbsdown",
+                label: l10n.text("player.dislike"),
+                active: viewModel.state?.currentMedia?.likeStatus == "DISLIKE",
+                activeColor: .red
+            ) {
+                Task { await viewModel.dislikeCurrent() }
+            }
+            .disabled(viewModel.isUpdatingRating)
         }
         .focusSection()
     }
@@ -1296,9 +1399,8 @@ private struct PlayerBottomBar: View {
                     disabled: progressScrubbing.wrappedValue
                 )
 
-                ProgressStrip(
-                    currentMs: viewModel.playbackTimeMs,
-                    durationMs: viewModel.playbackDurationMs,
+                PlayerProgressStrip(
+                    progress: viewModel.playbackProgress,
                     l10n: l10n,
                     scrubbing: progressScrubbing,
                     onActivity: onActivity,
@@ -1323,6 +1425,25 @@ private struct PlayerBottomBar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 18)
         .focusSection()
+    }
+}
+
+private struct PlayerProgressStrip: View {
+    @ObservedObject var progress: PlaybackProgress
+    var l10n: L10n
+    @Binding var scrubbing: Bool
+    var onActivity: () -> Void
+    var seek: (Int) -> Void
+
+    var body: some View {
+        ProgressStrip(
+            currentMs: progress.currentMs,
+            durationMs: progress.durationMs,
+            l10n: l10n,
+            scrubbing: $scrubbing,
+            onActivity: onActivity,
+            seek: seek
+        )
     }
 }
 
@@ -1521,6 +1642,14 @@ private struct ProgressStrip: View {
                 if durationMs <= 0 {
                     cancelScrubbing()
                 }
+            }
+            .onChange(of: scrubbing) {
+                if !scrubbing {
+                    stopScrubHold()
+                }
+            }
+            .onDisappear {
+                stopScrubHold()
             }
             .accessibilityLabel(l10n.text("player.position"))
             .accessibilityValue(
@@ -1929,6 +2058,7 @@ private struct SettingsView: View {
     var returnToMenu: () -> Void
 
     @State private var deviceCode = ""
+    @State private var isAssociating = false
     @FocusState private var connectionFocus: ConnectionFocus?
 
     var body: some View {
@@ -2064,7 +2194,7 @@ private struct SettingsView: View {
                                 Label(l10n.text("settings.associate"), systemImage: "link.badge.plus")
                             }
                             .adaptiveGlassButton(prominent: true)
-                            .disabled(deviceCode.count != 6 || !deviceCode.allSatisfy(\.isNumber))
+                            .disabled(isAssociating || !isValidDeviceCode)
 
                             if viewModel.isAssociated {
                                 Label(l10n.text("settings.associated"), systemImage: "checkmark.circle.fill")
@@ -2152,7 +2282,10 @@ private struct SettingsView: View {
     }
 
     private func associate() {
+        guard !isAssociating else { return }
+        isAssociating = true
         Task {
+            defer { isAssociating = false }
             guard
                 let serverID = viewModel.connectedServerID,
                 let result = await viewModel.associate(deviceCode: deviceCode)
@@ -2162,6 +2295,10 @@ private struct SettingsView: View {
             settings.saveAssociation(result, serverID: serverID)
             deviceCode = ""
         }
+    }
+
+    private var isValidDeviceCode: Bool {
+        deviceCode.count == 6 && deviceCode.allSatisfy { $0.isASCII && $0.isNumber }
     }
 
     private var adblockBinding: Binding<Bool> {

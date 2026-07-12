@@ -170,6 +170,34 @@ export const createApiRouter = ({
       return json(res, 200, withMediaPlaybackUrls(media, baseUrl), corsHeaders());
     }
 
+    const ratingMatch = pathname.match(/^\/api\/media\/([^/]+)\/rating$/);
+    if (ratingMatch) {
+      if (req.method !== 'PUT') return methodNotAllowed(res);
+      if (!clientForRequest(configStore, req)) {
+        return json(res, 403, {
+          error: 'pairing_required',
+          message: 'Pair this TV client before updating YouTube ratings.',
+        }, corsHeaders());
+      }
+      try {
+        const body = await readJson(req);
+        const likeStatus = String(body.likeStatus ?? '').toUpperCase();
+        if (!['LIKE', 'DISLIKE', 'INDIFFERENT'].includes(likeStatus)) {
+          return json(res, 400, {
+            error: 'invalid_like_status',
+            message: 'likeStatus must be LIKE, DISLIKE, or INDIFFERENT.',
+          }, corsHeaders());
+        }
+        const result = await youtubeService.setRating(ratingMatch[1], likeStatus);
+        return json(res, 200, result, corsHeaders());
+      } catch (error) {
+        return json(res, error.status ?? 502, {
+          error: error.code ?? 'youtube_rating_failed',
+          message: String(error?.message ?? error),
+        }, corsHeaders());
+      }
+    }
+
     const relatedMatch = pathname.match(/^\/api\/media\/([^/]+)\/related$/);
     if (relatedMatch) {
       if (req.method !== 'GET') return methodNotAllowed(res);

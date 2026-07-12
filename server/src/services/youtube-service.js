@@ -200,6 +200,16 @@ export class YouTubeMusicService {
     };
   }
 
+  async setRating(videoId, likeStatus) {
+    if (this.#oauthLibraryService?.authStatus().status !== 'configured') {
+      const error = new Error('Google OAuth login is required to update YouTube ratings.');
+      error.code = 'oauth_required';
+      error.status = 401;
+      throw error;
+    }
+    return await this.#oauthLibraryService.setRating(videoId, likeStatus);
+  }
+
   async resolveStream(media, options = {}) {
     const videoId = streamVideoId(media);
     if (!videoId) {

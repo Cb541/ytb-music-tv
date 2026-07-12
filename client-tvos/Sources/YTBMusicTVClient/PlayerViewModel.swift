@@ -24,6 +24,12 @@ private struct PrefetchedPlaybackMedia {
 }
 
 @MainActor
+final class PlaybackProgress: ObservableObject {
+    @Published var currentMs = 0
+    @Published var durationMs = 0
+}
+
+@MainActor
 final class PlayerViewModel: ObservableObject {
     @Published var state: PlayerState?
     @Published var searchSections: [MediaSection] = []
@@ -41,12 +47,12 @@ final class PlayerViewModel: ObservableObject {
     @Published var isSearching = false
     @Published var isPreparingPlayback = false
     @Published private(set) var pendingMedia: MediaItem?
-    @Published var playbackTimeMs = 0
-    @Published var playbackDurationMs = 0
     @Published var currentStreamHasVideo = false
+    @Published private(set) var isUpdatingRating = false
     @Published var errorMessage: String?
 
     let player = AVPlayer()
+    let playbackProgress = PlaybackProgress()
 
     private var client: APIClient?
     private var timeObserver: Any?
@@ -56,13 +62,16 @@ final class PlayerViewModel: ObservableObject {
     private var fallbackPlaybackURLs: [URL] = []
     private var audioFallbackAttempted = false
     private var playbackRequestID = UUID()
+    private var ratingRequestID = UUID()
     private var playbackHistory: [String] = []
     private var nextPlaybackTask: Task<Void, Never>?
     private var nextPlaybackCandidate: MediaItem?
     private var nextPlaybackCache: NextPlaybackCache?
     private var configUpdateTask: Task<Void, Never>?
     private var configRevision = 0
+    private var connectionRevision = 0
     private var homeLoadRevision = 0
+    private var searchRevision = 0
     private var homeNavigationHistory: [[MediaSection]] = []
     private var searchNavigationHistory: [[MediaSection]] = []
     private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
@@ -70,6 +79,16 @@ final class PlayerViewModel: ObservableObject {
     private var artworkLoadTask: Task<Void, Never>?
     private var nowPlayingArtworkURL: URL?
     private var nowPlayingArtwork: MPMediaItemArtwork?
+
+    private var playbackTimeMs: Int {
+        get { playbackProgress.currentMs }
+        set { playbackProgress.currentMs = newValue }
+    }
+
+    private var playbackDurationMs: Int {
+        get { playbackProgress.durationMs }
+        set { playbackProgress.durationMs = newValue }
+    }
 
     init() {
         player.volume = 1
@@ -98,8 +117,24 @@ final class PlayerViewModel: ObservableObject {
     // MARK: - Data source
 
     func connect(to baseURL: URL, accessToken: String? = nil) async {
+        connectionRevision &+= 1
+        let revision = connectionRevision
+        homeLoadRevision &+= 1
+        searchRevision &+= 1
+        ratingRequestID = UUID()
+        isLoadingHome = false
+        isSearching = false
+        isUpdatingRating = false
+        if client?.baseURL != baseURL {
+            configUpdateTask?.cancel()
+            configRevision &+= 1
+        }
         isConnecting = true
-        defer { isConnecting = false }
+        defer {
+            if revision == connectionRevision {
+                isConnecting = false
+            }
+        }
 
         let nextClient = APIClient(baseURL: baseURL, accessToken: accessToken)
         do {
@@ -107,6 +142,8 @@ final class PlayerViewModel: ObservableObject {
             guard connection.ok else {
                 throw APIError.invalidResponse
             }
+            let nextConfig = try? await nextClient.config()
+            guard revision == connectionRevision else { return }
             client = nextClient
             invalidateNextPlaybackCache()
             isConnected = true
@@ -114,10 +151,11 @@ final class PlayerViewModel: ObservableObject {
             isAuthenticated = connection.authenticated
             connectedServerID = connection.serverId
             connectedServerName = connection.serverName
-            config = try? await nextClient.config()
+            config = nextConfig
             errorMessage = nil
             await loadHome()
         } catch {
+            guard revision == connectionRevision else { return }
             client = nil
             invalidateNextPlaybackCache()
             isConnected = false
@@ -125,6 +163,7 @@ final class PlayerViewModel: ObservableObject {
             isAuthenticated = false
             connectedServerID = nil
             connectedServerName = nil
+            config = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -179,19 +218,30 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func search(_ query: String) async {
+        searchRevision &+= 1
+        let revision = searchRevision
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !trimmedQuery.isEmpty else {
             searchSections = []
+            searchNavigationHistory.removeAll()
+            isSearching = false
             return
         }
 
         isSearching = true
-        defer { isSearching = false }
+        defer {
+            if revision == searchRevision {
+                isSearching = false
+            }
+        }
         do {
-            searchSections = try await client.search(query: trimmedQuery).sections
+            let sections = try await client.search(query: trimmedQuery).sections
+            guard revision == searchRevision else { return }
+            searchSections = sections
             searchNavigationHistory.removeAll()
             errorMessage = nil
         } catch {
+            guard revision == searchRevision else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -386,14 +436,11 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func likeCurrent() async {
-        updateLikeStatus("LIKE")
+        await setCurrentRating(state?.currentMedia?.likeStatus == "LIKE" ? "INDIFFERENT" : "LIKE")
     }
 
     func dislikeCurrent() async {
-        updateLikeStatus("DISLIKE")
-        if config?.features.skipDislikedSongs.enabled == true {
-            await next()
-        }
+        await setCurrentRating(state?.currentMedia?.likeStatus == "DISLIKE" ? "INDIFFERENT" : "DISLIKE")
     }
 
     func seek(to milliseconds: Int) {
@@ -432,13 +479,6 @@ final class PlayerViewModel: ObservableObject {
         guard let previous = homeNavigationHistory.popLast() else { return false }
         homeSections = previous
         return true
-    }
-
-    func resetHomeNavigation() {
-        if let rootSections = homeNavigationHistory.first {
-            homeSections = rootSections
-        }
-        homeNavigationHistory.removeAll()
     }
 
     @discardableResult
@@ -641,10 +681,6 @@ final class PlayerViewModel: ObservableObject {
 
                 let currentMs = max(0, Int(seconds * 1000))
                 self.playbackTimeMs = currentMs
-                if var nextState = self.state {
-                    nextState.currentTimeMs = currentMs
-                    self.state = nextState
-                }
 
                 let durationSeconds = CMTimeGetSeconds(self.player.currentItem?.duration ?? .invalid)
                 if durationSeconds.isFinite, durationSeconds > 0 {
@@ -784,6 +820,35 @@ final class PlayerViewModel: ObservableObject {
         }
         state = nextState
         updateNowPlayingInfo()
+    }
+
+    private func setCurrentRating(_ likeStatus: String) async {
+        guard let client, let media = state?.currentMedia, let videoID = media.videoId else {
+            errorMessage = "This item cannot be rated on YouTube."
+            return
+        }
+
+        let requestID = UUID()
+        ratingRequestID = requestID
+        isUpdatingRating = true
+        defer {
+            if ratingRequestID == requestID {
+                isUpdatingRating = false
+            }
+        }
+
+        do {
+            let result = try await client.setRating(mediaId: videoID, likeStatus: likeStatus)
+            guard ratingRequestID == requestID, state?.currentMediaId == media.id else { return }
+            updateLikeStatus(result.likeStatus)
+            errorMessage = nil
+            if result.likeStatus == "DISLIKE", config?.features.skipDislikedSongs.enabled == true {
+                await next()
+            }
+        } catch {
+            guard ratingRequestID == requestID else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func updateStatus(_ status: String) {
@@ -1067,7 +1132,6 @@ private func merge(_ original: MediaItem, with resolved: MediaItem?) -> MediaIte
     resolved.durationMs = resolved.durationMs > 0 ? resolved.durationMs : original.durationMs
     resolved.artworkUrl = resolved.artworkUrl ?? original.artworkUrl
     resolved.sourceUrl = resolved.sourceUrl ?? original.sourceUrl
-    resolved.likeStatus = original.likeStatus
     resolved.tags = resolved.tags.isEmpty ? original.tags : resolved.tags
     return resolved
 }

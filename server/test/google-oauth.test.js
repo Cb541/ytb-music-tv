@@ -33,7 +33,7 @@ test('device login stores refreshable credentials without exposing tokens', asyn
         refresh_token: 'refresh-token',
         expires_in: 3600,
         token_type: 'Bearer',
-        scope: 'https://www.googleapis.com/auth/youtube.readonly',
+        scope: 'https://www.googleapis.com/auth/youtube',
       });
     },
   });
@@ -46,6 +46,7 @@ test('device login stores refreshable credentials without exposing tokens', asyn
   assert.equal(status.hasRefreshToken, true);
   assert.equal('accessToken' in status, false);
   assert.equal(store.get().refreshToken, 'refresh-token');
+  assert.equal(requests[0].body.scope, 'https://www.googleapis.com/auth/youtube');
   assert.equal(requests[1].body.grant_type, 'urn:ietf:params:oauth:grant-type:device_code');
 });
 
