@@ -117,7 +117,7 @@ export class YouTubeTvService {
       await client.session.http.fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ target: videoId, client: TV_CLIENT }),
+        body: JSON.stringify({ target: { videoId }, client: TV_CLIENT }),
       });
     } catch (cause) {
       const status = httpStatusFromError(cause);

@@ -119,9 +119,9 @@ test('writes likes, dislikes, and rating removal through the authenticated TV cl
   await service.setRating('abcdefghijk', 'INDIFFERENT');
 
   assert.deepEqual(calls, [
-    ['like/like', { target: 'abcdefghijk', client: 'TV' }],
-    ['like/dislike', { target: 'abcdefghijk', client: 'TV' }],
-    ['like/removelike', { target: 'abcdefghijk', client: 'TV' }],
+    ['like/like', { target: { videoId: 'abcdefghijk' }, client: 'TV' }],
+    ['like/dislike', { target: { videoId: 'abcdefghijk' }, client: 'TV' }],
+    ['like/removelike', { target: { videoId: 'abcdefghijk' }, client: 'TV' }],
   ]);
   assert.equal(client.session.logged_in, true);
 });
