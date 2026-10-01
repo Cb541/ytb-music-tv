@@ -192,3 +192,13 @@ Crossfade uses the SF Symbols waveform icon in the same 48x44-point content fram
 ## Right-aligned tighter auxiliary controls
 
 The right-side control gaps decrease from 20 to 16 points. Trailing alignment is retained, so the group contracts toward the right edge. Icon dimensions and the waveform crossfade menu are retained.
+
+## Boxless right controls gathered toward Crossfade
+
+Lyrics, Video, Queue and Crossfade render without control-box backgrounds, including during focus. Artwork tint, icon focus glow, slight scale feedback, the two-second emphasis timeout and original hit areas remain. Their gaps reduce from 16 to 4 points; the trailing alignment and Crossfade's width remain unchanged, anchoring Crossfade while the other icons gather toward it. Left-control styling is unchanged.
+
+## Faster animated-cover startup
+
+The still-cover download and animation lookup start concurrently. Artwork providers race to return the first validated motion URL rather than waiting for earlier providers to time out. When album metadata is missing, direct song-based providers start immediately while album discovery and enriched lookups run independently. Successful results keep using the existing cache; losing requests are cancelled and artist/title/album validation is retained.
+
+The motion-only AVQueuePlayer uses a one-second preferred forward buffer and requests immediate startup once data permits, while retaining automatic recovery after network stalls. This can trade occasional rebuffering on slow connections for quicker startup; song playback settings are unchanged. Foundation tests exercise first-valid-result selection, cancellation of a slow provider and metadata mismatch rejection. The GitHub build executes these tests and checks tvOS compilation; network and Apple TV startup timing remain to be verified on-device.

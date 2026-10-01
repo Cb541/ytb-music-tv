@@ -177,12 +177,12 @@ struct MusicPlayerScreen: View {
                 }
                 .padding(.leading, -55)
                 Spacer()
-                HStack(spacing: 16) {
-                    control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true) { lyricsVisible.toggle() }
+                HStack(spacing: 4) {
+                    control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     if viewModel.currentStreamHasVideo {
-                        control("video", label: "Music video", selected: videoVisible, compact: true) { videoVisible.toggle() }
+                        control("video", label: "Music video", selected: videoVisible, compact: true, boxless: true) { videoVisible.toggle() }
                     }
-                    control("list.bullet", label: "Queue", compact: true) { showingQueue = true }
+                    control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
                         Picker("Crossfade", selection: $crossfadeSeconds) {
                             Text("Off").tag(0.0)
@@ -194,7 +194,7 @@ struct MusicPlayerScreen: View {
                             .frame(width: 48, height: 44)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
+                        highlighted: controlHighlightVisible && focusedControl == "Crossfade", showsBackground: false))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
                     .fixedSize(horizontal: true, vertical: false)
                     .scaleEffect(0.9)
@@ -212,13 +212,13 @@ struct MusicPlayerScreen: View {
         }
     }
 
-    private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, compact: Bool = false, action: @escaping () -> Void) -> some View {
+    private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, compact: Bool = false, boxless: Bool = false, action: @escaping () -> Void) -> some View {
         Button { noteControlActivity(); action() } label: {
             Image(systemName: icon).font(.system(size: 25, weight: .semibold)).frame(width: 48, height: 44)
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless))
         .scaleEffect(compact ? 0.9 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
@@ -433,12 +433,13 @@ private struct MusicControlButtonStyle: ButtonStyle {
     let accent: Color
     let highlighted: Bool
     var backgroundOpacity = 0.08
+    var showsBackground = true
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(backgroundOpacity + (highlighted ? 0.10 : 0))))
+            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(showsBackground ? backgroundOpacity + (highlighted ? 0.10 : 0) : 0)))
             .shadow(color: accent.opacity(highlighted ? 0.3 : 0), radius: 12)
             .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? 1.04 : 1)
             .animation(.easeOut(duration: 0.2), value: highlighted)

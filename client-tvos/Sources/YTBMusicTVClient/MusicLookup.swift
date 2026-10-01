@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-struct MusicArtworkResult {
+struct MusicArtworkResult: Sendable {
     var still: URL?
     var motion: URL?
 }
@@ -229,31 +229,63 @@ enum MusicLookup {
         }?["collectionName"] as? String
     }
 
-    static func artwork(for media: MediaItem) async -> MusicArtworkResult {
-        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
-        guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
-        var album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
-        if album == nil, let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": "us", "limit": "12"]),
-           let data = try? await fetch(url) {
-            album = discoveredAlbum(data, title: title, artist: artist, durationMs: media.durationMs)
+    static func firstArtwork(
+        from requests: [URL], title: String, artist: String, album: String?, fallback: URL?,
+        load: @escaping @Sendable (URL) async throws -> Data = { try await fetch($0) }
+    ) async -> MusicArtworkResult? {
+        await withTaskGroup(of: MusicArtworkResult?.self) { group in
+            for url in requests {
+                group.addTask {
+                    guard !Task.isCancelled, let data = try? await load(url), !Task.isCancelled else { return nil }
+                    return artworkResult(data, title: title, artist: artist, album: album, fallback: fallback)
+                }
+            }
+            for await result in group {
+                if let result { group.cancelAll(); return result }
+            }
+            return nil
         }
-        guard !Task.isCancelled else { return MusicArtworkResult(still: media.artworkUrl) }
+    }
+
+    static func artworkRequests(title: String, artist: String, album: String?, durationMs: Int, includeCatalog: Bool = true) -> [URL] {
         var requests: [URL] = []
         var boidu = ["s": title, "a": artist]
         if let album { boidu["al"] = album }
-        if media.durationMs > 0 { boidu["d"] = String(media.durationMs / 1000) }
+        if durationMs > 0 { boidu["d"] = String(durationMs / 1000) }
         if let album, let url = query("https://artwork.m8tec.top/api/v1/artwork/search", ["artist": artist, "album": album]) {
             requests.append(url)
         }
         if let url = query("https://artwork.boidu.dev/", boidu) { requests.append(url) }
-        if let url = query("https://apple-music-artwork.nopxx.site/api/search", ["term": artist + " " + title, "limit": "8", "animation": "1"]) {
+        if includeCatalog, let url = query("https://apple-music-artwork.nopxx.site/api/search", ["term": artist + " " + title, "limit": "8", "animation": "1"]) {
             requests.append(url)
         }
-        for url in requests {
-            guard !Task.isCancelled else { break }
-            guard let data = try? await fetch(url) else { continue }
-            if let result = artworkResult(data, title: title, artist: artist, album: album, fallback: media.artworkUrl) { return result }
+        return requests
+    }
+
+    static func artwork(for media: MediaItem) async -> MusicArtworkResult {
+        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
+        guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
+        let album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
+        let durationMs = media.durationMs, fallback = media.artworkUrl
+        let direct = artworkRequests(title: title, artist: artist, album: album, durationMs: durationMs)
+        let result: MusicArtworkResult? = await withTaskGroup(of: MusicArtworkResult?.self) { group in
+            group.addTask {
+                await firstArtwork(from: direct, title: title, artist: artist, album: album, fallback: fallback)
+            }
+            if album == nil {
+                group.addTask {
+                    guard let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": "us", "limit": "12"]),
+                          let data = try? await fetch(url), !Task.isCancelled,
+                          let discovered = discoveredAlbum(data, title: title, artist: artist, durationMs: durationMs) else { return nil }
+                    let enriched = artworkRequests(title: title, artist: artist, album: discovered, durationMs: durationMs, includeCatalog: false)
+                    return await firstArtwork(from: enriched, title: title, artist: artist, album: discovered, fallback: fallback)
+                }
+            }
+            for await result in group {
+                if let result { group.cancelAll(); return result }
+            }
+            return nil
         }
-        return MusicArtworkResult(still: media.artworkUrl)
+        return result ?? MusicArtworkResult(still: media.artworkUrl)
     }
 }

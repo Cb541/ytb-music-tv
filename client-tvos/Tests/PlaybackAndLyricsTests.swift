@@ -2,7 +2,7 @@ import Foundation
 
 @main
 enum PlaybackAndLyricsTests {
-    static func main() throws {
+    static func main() async throws {
         let response = #"{"videoId":"song","directUrl":{"unexpected":"object"},"proxyUrl":"http://192.168.1.10:4174/api/stream/song?preferVideo=false","adaptiveVideoUrl":{},"adaptiveAudioUrl":[],"adaptiveVideoProxyUrl":42,"adaptiveAudioProxyUrl":"","expiresAt":1234,"media":{"id":"song","title":"Test song","artist":"Artist","durationMs":"120000","artworkUrl":{},"sourceUrl":[]}}"#
         let stream = try JSONDecoder().decode(ResolvedStream.self, from: Data(response.utf8))
         precondition(stream.directUrl == stream.proxyUrl)
@@ -109,6 +109,31 @@ enum PlaybackAndLyricsTests {
         let quickWord = MusicLyricWord(text: "a", start: 0, end: 0.05)
         precondition(abs(quickWord.highlightProgress(at: 0.06) - 0.5) < 0.0001)
         precondition(smoothWord.highlightProgress(at: .nan) == 0)
+        let probe = ArtworkRaceProbe()
+        let fastProvider = URL(string: "https://example.com/fast-artwork")!
+        let slowProvider = URL(string: "https://example.com/slow-artwork")!
+        let racedArtwork = await MusicLookup.firstArtwork(from: [slowProvider, fastProvider], title: "Song", artist: "Artist", album: "Album", fallback: nil) { url in
+            if url == slowProvider {
+                await probe.started()
+                do { try await Task.sleep(nanoseconds: 30_000_000_000) }
+                catch { await probe.cancelled(); throw error }
+                return Data()
+            }
+            while !(await probe.hasStarted) { try await Task.sleep(nanoseconds: 1_000_000) }
+            return m8tec
+        }
+        precondition(racedArtwork?.motion?.lastPathComponent == "motion.m3u8")
+        let cancelledSlowProvider = await probe.wasCancelled
+        precondition(cancelledSlowProvider)
+        let noArtwork = await MusicLookup.firstArtwork(from: [fastProvider], title: "Song", artist: "Other Artist", album: "Album", fallback: nil) { _ in m8tec }
+        precondition(noArtwork == nil)
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
+}
+
+private actor ArtworkRaceProbe {
+    private(set) var hasStarted = false
+    private(set) var wasCancelled = false
+    func started() { hasStarted = true }
+    func cancelled() { wasCancelled = true }
 }

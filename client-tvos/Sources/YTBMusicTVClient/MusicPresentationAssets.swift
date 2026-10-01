@@ -64,9 +64,11 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
-        // Show the regular cover immediately; motion lookup never blocks music.
-        await loadImage(media.artworkUrl, token: token)
-        guard animated, !Task.isCancelled, generation == token else { return }
+        guard animated else { await loadImage(media.artworkUrl, token: token); return }
+        // Fetch the still cover and animation independently; a slow thumbnail
+        // must not postpone finding or starting the motion artwork.
+        async let stillCover: Void = loadImage(media.artworkUrl, token: token)
+        guard !Task.isCancelled, generation == token else { return }
         let result: MusicArtworkResult
         let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? media.title)
         if let cached = artworkCache[cacheKey] { result = cached }
@@ -76,6 +78,8 @@ final class MusicPresentationAssets: ObservableObject {
         // Do not pin a temporary provider outage as a permanent static-only answer.
         if result.motion != nil { artworkCache[cacheKey] = result }
         motionURL = result.motion
+        _ = await stillCover
+        guard !Task.isCancelled, generation == token else { return }
         if result.still != media.artworkUrl { await loadImage(result.still, token: token) }
     }
 
@@ -205,9 +209,12 @@ struct MusicMotionArtwork: UIViewRepresentable {
                 player.pause(); looper?.disableLooping(); player.removeAllItems()
                 self.url = url
                 playerLayer.isHidden = true
-                looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+                let item = AVPlayerItem(url: url)
+                item.preferredForwardBufferDuration = 1
+                looper = AVPlayerLooper(player: player, templateItem: item)
+                for loopItem in player.items() { loopItem.preferredForwardBufferDuration = 1 }
             }
-            if active { player.play() } else { player.pause() }
+            if active { player.playImmediately(atRate: 1) } else { player.pause() }
         }
         func stop() {
             displayObserver?.invalidate(); displayObserver = nil
