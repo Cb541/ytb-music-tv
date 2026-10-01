@@ -112,3 +112,7 @@ When the music video is active, the artwork view is removed from the layout and 
 ## Played lyric blur
 
 Synchronized lyric rows before the current line receive a soft 3-point blur with a 0.25-second transition. The active and upcoming lines remain sharp. Blur is applied to the text inside the existing row button, preserving hit areas and accessibility. Seeking recalculates played rows from the actual active line. Untimed lyrics stay sharp.
+
+## Track-change background continuity
+
+Song loading no longer clears the background image or resets the palette to indigo/purple. Album-cover loading still resets the foreground cover and motion player for correct track identity, while a separate background image remains until the next cover arrives. Initial/no-track fallback is neutral dark. The native warp renderer blends cached blurred covers over 1.2 seconds, preserving motion phase; rapid replacement freezes the current blend before starting a new one. The adaptive veil also animates over 1.2 seconds. Paused/static mode shows new artwork immediately. Syntax and cumulative update checks pass; Core Image SDK build and device transition verification remain required.

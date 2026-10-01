@@ -357,13 +357,14 @@ private struct MusicAmbientBackground: View {
         ZStack {
             Color(red: 0.025, green: 0.035, blue: 0.028)
             ZStack {
-                if let image = assets.artworkImage {
+                if let image = assets.backgroundImage {
                     MusicWarpedArtwork(image: image, active: !paused)
                 } else {
                     LinearGradient(colors: assets.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
                 Color(red: 0.024, green: 0.04, blue: 0.028).opacity(0.42)
                 Color(red: 3.0 / 255, green: 7.0 / 255, blue: 4.0 / 255).opacity(assets.backgroundVeil)
+                    .animation(.easeInOut(duration: 1.2), value: assets.backgroundVeil)
             }
             .opacity(0.82)
         }

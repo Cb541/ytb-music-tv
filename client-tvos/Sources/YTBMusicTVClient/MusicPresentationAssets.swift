@@ -9,9 +9,10 @@ final class MusicPresentationAssets: ObservableObject {
     @Published var lyrics = MusicLyrics()
     @Published var lyricsLoading = false
     @Published var artworkImage: UIImage?
+    @Published var backgroundImage: UIImage?
     @Published var motionURL: URL?
     @Published var backgroundVeil = 0.34
-    @Published var colors: [Color] = [.indigo, .purple, .black]
+    @Published var colors: [Color] = [.black, .gray.opacity(0.15), .black]
     var accentColor: Color {
         let base = UIColor(colors.first ?? .indigo)
         var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
@@ -25,9 +26,15 @@ final class MusicPresentationAssets: ObservableObject {
     func load(_ media: MediaItem?, animated: Bool) async {
         let token = UUID(); generation = token
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
-        colors = [.indigo, .purple, .black]
-        backgroundVeil = 0.34
-        guard let media else { lyricsLoading = false; return }
+        // Keep the previous backdrop until a new cover arrives; clearing it
+        // would expose a colored fallback during every song transition.
+        guard let media else {
+            lyricsLoading = false
+            backgroundImage = nil
+            colors = [.black, .gray.opacity(0.15), .black]
+            backgroundVeil = 0.34
+            return
+        }
         lyricsLoading = true
         async let loadedLyrics: Void = loadLyrics(media, token: token)
         async let loadedArtwork: Void = loadArtwork(media, animated: animated, token: token)
@@ -76,6 +83,7 @@ final class MusicPresentationAssets: ObservableObject {
         guard let url, let data = try? await MusicLookup.fetch(url), let image = UIImage(data: data),
               generation == token, !Task.isCancelled else { return }
         artworkImage = image
+        backgroundImage = image
         colors = Self.palette(image)
         backgroundVeil = Self.balancedVeil(image)
     }
@@ -221,6 +229,8 @@ struct MusicWarpedArtwork: UIViewRepresentable {
         private let renderBounds = CGRect(x: 0, y: 0, width: 480, height: 270)
         private var sourceImage: UIImage?
         private var blurred: CIImage?
+        private var transitionFrom: CIImage?
+        private var transitionStart: CFTimeInterval?
         private var displayLink: CADisplayLink?
         private var phase = 0.0
         private var previousTime: CFTimeInterval?
@@ -235,8 +245,12 @@ struct MusicWarpedArtwork: UIViewRepresentable {
 
         func update(image: UIImage, active: Bool) {
             if sourceImage !== image {
+                let previous = active ? blendedSource(at: CACurrentMediaTime()) : nil
+                let frozen = previous.flatMap { context.createCGImage($0, from: renderBounds) }
                 sourceImage = image
                 prepare(image)
+                transitionFrom = frozen.map { CIImage(cgImage: $0).clampedToExtent() }
+                transitionStart = transitionFrom == nil ? nil : CACurrentMediaTime()
                 render()
             }
             if active && displayLink == nil {
@@ -272,8 +286,23 @@ struct MusicWarpedArtwork: UIViewRepresentable {
             render()
         }
 
+        private func blendedSource(at time: CFTimeInterval) -> CIImage? {
+            guard let blurred else { return nil }
+            guard let previous = transitionFrom, let start = transitionStart else { return blurred }
+            let progress = min(1, max(0, (time - start) / 1.2))
+            if progress >= 1 {
+                transitionFrom = nil; transitionStart = nil
+                return blurred
+            }
+            let blend = CIFilter.dissolveTransition()
+            blend.inputImage = previous
+            blend.targetImage = blurred
+            blend.time = Float(progress * progress * (3 - 2 * progress))
+            return blend.outputImage ?? blurred
+        }
+
         private func render() {
-            guard let blurred else { return }
+            guard let blurred = blendedSource(at: CACurrentMediaTime()) else { return }
             let width = renderBounds.width, height = renderBounds.height
             let twirl = CIFilter.twirlDistortion()
             twirl.inputImage = blurred
