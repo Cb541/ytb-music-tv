@@ -19,13 +19,14 @@ struct MusicPlayerScreen: View {
     @State private var controlActivityRevision = 0
 
     private var displayedMedia: MediaItem? { viewModel.pendingMedia ?? viewModel.state?.currentMedia }
+    private var musicVideoActive: Bool { videoVisible && viewModel.currentStreamHasVideo }
     private var lookupID: String { (viewModel.state?.currentMediaId ?? "") + (motionArtwork ? ":motion" : ":still") }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 ambientBackground
-                if videoVisible && viewModel.currentStreamHasVideo {
+                if musicVideoActive {
                     VideoPlayer(player: viewModel.player)
                         .allowsHitTesting(false)
                         .overlay(Color.black.opacity(0.55))
@@ -39,12 +40,16 @@ struct MusicPlayerScreen: View {
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
                             VStack(spacing: 34) {
-                                artwork(side: lyricsVisible
-                                    ? min(geometry.size.height * 0.47, geometry.size.width * 0.34)
-                                    : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
+                                if musicVideoActive {
+                                    Spacer(minLength: 0)
+                                } else {
+                                    artwork(side: lyricsVisible
+                                        ? min(geometry.size.height * 0.47, geometry.size.width * 0.34)
+                                        : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
+                                }
                                 trackDetails
                             }
-                            .frame(maxWidth: .infinity, alignment: lyricsVisible ? .leading : .center)
+                            .frame(maxWidth: .infinity, maxHeight: musicVideoActive ? .infinity : nil, alignment: lyricsVisible ? .leading : .center)
                             if lyricsVisible {
                                 MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
@@ -265,6 +270,7 @@ private struct MusicLyricsPane: View {
                         LazyVStack(alignment: .leading, spacing: 26) {
                             ForEach(assets.lyrics.lines) { line in
                                 let isActive = assets.lyrics.synchronized && line.id == activeLine
+                                let isPast = assets.lyrics.synchronized && activeLine.map { line.id < $0 } == true
                                 Button {
                                     if let time = line.time { seek(Int(time * 1000)); resumeFollowing() }
                                 } label: {
@@ -273,6 +279,8 @@ private struct MusicLyricsPane: View {
                                         .foregroundStyle(isActive ? assets.accentColor : Color.white.opacity(assets.lyrics.synchronized ? 0.38 : 0.95))
                                         .shadow(color: assets.accentColor.opacity(isActive ? 0.7 : 0), radius: 8)
                                         .shadow(color: assets.accentColor.opacity(isActive ? 0.32 : 0), radius: 22)
+                                        .blur(radius: isPast ? 3 : 0)
+                                        .animation(.easeOut(duration: 0.25), value: isPast)
                                         .animation(.easeOut(duration: 0.25), value: isActive)
                                         .multilineTextAlignment(.leading)
                                         .frame(maxWidth: .infinity, alignment: .leading)

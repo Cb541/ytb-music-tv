@@ -104,3 +104,11 @@ Increases the gap between album artwork and song metadata from 22 to 34 points, 
 ## Right-side control grouping
 
 Lyrics, Music Video, Queue and Crossfade share a trailing HStack with 24-point gaps. The group shifts 45 points toward the screen edge. Crossfade uses its intrinsic width instead of a 210-point outer frame so that unused width does not create an uneven visual gap. Music Video remains conditional on video availability.
+
+## Music video cover layering
+
+When the music video is active, the artwork view is removed from the layout and its motion player is dismantled. Song details sit at the bottom of the video stage above controls. Turning video off restores the regular centered/lyric cover. The same audio/video AVPlayer continues playing.
+
+## Played lyric blur
+
+Synchronized lyric rows before the current line receive a soft 3-point blur with a 0.25-second transition. The active and upcoming lines remain sharp. Blur is applied to the text inside the existing row button, preserving hit areas and accessibility. Seeking recalculates played rows from the actual active line. Untimed lyrics stay sharp.
