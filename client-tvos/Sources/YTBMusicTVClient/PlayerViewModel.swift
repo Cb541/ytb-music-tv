@@ -1358,9 +1358,13 @@ final class PlayerViewModel: ObservableObject {
               cache.requestID == playbackRequestID,
               cache.mediaID == media.id
         else { return nil }
+        // AVPlayerItems are owned by their deck. A manual skip gets a fresh item,
+        // even when AVFoundation is still releasing the standby deck's item.
+        let freshItem = cache.item.map { AVPlayerItem(asset: $0.asset) }
+        standbyPlayer?.pause()
         standbyPlayer?.replaceCurrentItem(with: nil)
         standbyPlayer = nil
-        return PrefetchedPlaybackMedia(resolved: cache.resolved, item: cache.item)
+        return PrefetchedPlaybackMedia(resolved: cache.resolved, item: freshItem)
     }
 
     private func nextQueueItem(

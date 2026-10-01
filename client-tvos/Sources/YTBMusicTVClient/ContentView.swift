@@ -1435,6 +1435,7 @@ struct PlayerProgressStrip: View {
     @Binding var scrubbing: Bool
     var onActivity: () -> Void
     var seek: (Int) -> Void
+    var accentColor: Color = .red
 
     var body: some View {
         ProgressStrip(
@@ -1443,7 +1444,8 @@ struct PlayerProgressStrip: View {
             l10n: l10n,
             scrubbing: $scrubbing,
             onActivity: onActivity,
-            seek: seek
+            seek: seek,
+            accentColor: accentColor
         )
     }
 }
@@ -1611,6 +1613,7 @@ private struct ProgressStrip: View {
     @Binding var scrubbing: Bool
     var onActivity: () -> Void
     var seek: (Int) -> Void
+    var accentColor: Color = .red
 
     @State private var scrubMs = 0
     @State private var scrubRunDirection: ScrubDirection?
@@ -1668,7 +1671,7 @@ private struct ProgressStrip: View {
                     cornerRadius: 16,
                     interactive: true,
                     emphasized: focused || scrubbing,
-                    highlightColor: scrubbing ? .red : .white
+                    highlightColor: scrubbing ? accentColor : .white
                 )
         }
         .overlay {
@@ -1692,7 +1695,7 @@ private struct ProgressStrip: View {
                     Capsule()
                         .fill(.white.opacity(trackOpacity))
                     Capsule()
-                        .fill(.red)
+                        .fill(accentColor)
                         .frame(width: proxy.size.width * displayedProgress)
                         .animation(scrubbing ? nil : .linear(duration: 0.95), value: currentMs)
 

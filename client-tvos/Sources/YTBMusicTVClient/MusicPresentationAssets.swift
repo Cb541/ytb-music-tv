@@ -10,6 +10,12 @@ final class MusicPresentationAssets: ObservableObject {
     @Published var artworkImage: UIImage?
     @Published var motionURL: URL?
     @Published var colors: [Color] = [.indigo, .purple, .black]
+    var accentColor: Color {
+        let base = UIColor(colors.first ?? .indigo)
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        guard base.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else { return .white }
+        return Color(uiColor: UIColor(hue: hue, saturation: min(saturation, 0.75), brightness: max(brightness, 0.85), alpha: 1))
+    }
     private var lyricsCache: [String: MusicLyrics] = [:]
     private var artworkCache: [String: MusicArtworkResult] = [:]
     private var generation = UUID()
@@ -77,7 +83,19 @@ final class MusicPresentationAssets: ObservableObject {
             let old = buckets[key] ?? (0, 0, 0, 0)
             buckets[key] = (old.r + Double(r), old.g + Double(g), old.b + Double(b), old.count + 1)
         }
-        let sorted = buckets.values.sorted { $0.count > $1.count }.prefix(3)
+        let ranked = buckets.values.sorted { $0.count > $1.count }
+        var selected: [(r: Double, g: Double, b: Double, count: Int)] = []
+        for bucket in ranked {
+            let unique = selected.allSatisfy { existing in
+                let dr = bucket.r / Double(bucket.count) - existing.r / Double(existing.count)
+                let dg = bucket.g / Double(bucket.count) - existing.g / Double(existing.count)
+                let db = bucket.b / Double(bucket.count) - existing.b / Double(existing.count)
+                return dr * dr + dg * dg + db * db > 3600
+            }
+            if unique { selected.append(bucket) }
+            if selected.count == 3 { break }
+        }
+        let sorted = selected
         let result = sorted.map { bucket in
             Color(red: bucket.r / Double(bucket.count) / 255, green: bucket.g / Double(bucket.count) / 255,
                   blue: bucket.b / Double(bucket.count) / 255)

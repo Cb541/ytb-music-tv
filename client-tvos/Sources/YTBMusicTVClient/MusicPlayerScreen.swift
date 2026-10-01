@@ -37,24 +37,19 @@ struct MusicPlayerScreen: View {
                         Button(action: onBack) { Label("Library", systemImage: "chevron.left") }
                             .buttonStyle(.bordered)
                     }
-                    HStack(alignment: .center, spacing: 100) {
-                        artwork(side: min(geometry.size.height * (lyricsVisible ? 0.47 : 0.57), lyricsVisible ? geometry.size.width * 0.35 : geometry.size.width * 0.42))
+                    HStack(alignment: .center, spacing: 80) {
+                        VStack(spacing: 22) {
+                            artwork(side: min(geometry.size.height * 0.47, geometry.size.width * 0.34))
+                            trackDetails
+                        }
+                        .frame(maxWidth: .infinity)
                         if lyricsVisible {
                             MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
                                 .transition(.opacity.combined(with: .move(edge: .trailing)))
-                        } else {
-                            trackDetails
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    .frame(maxHeight: .infinity)
-                    if lyricsVisible {
-                        HStack {
-                            trackDetails
-                            Spacer()
-                        }
-                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     playbackControls
                 }
                 .padding(.horizontal, 90)
@@ -79,27 +74,9 @@ struct MusicPlayerScreen: View {
     }
 
     private var ambientBackground: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduceMotion || scenePhase != .active)) { context in
-            let phase = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate / 16
-            GeometryReader { geometry in
-                ZStack {
-                    LinearGradient(colors: assets.colors + [.black], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    Ellipse().fill(assets.colors.first ?? .indigo)
-                        .frame(width: geometry.size.width * 0.75, height: geometry.size.height * 1.2)
-                        .blur(radius: 130)
-                        .offset(x: CGFloat(sin(phase)) * geometry.size.width * 0.18,
-                                y: CGFloat(cos(phase * 0.7)) * geometry.size.height * 0.18)
-                    Ellipse().fill(assets.colors.last ?? .purple)
-                        .frame(width: geometry.size.width * 0.6, height: geometry.size.height)
-                        .blur(radius: 150)
-                        .offset(x: geometry.size.width * 0.4 + CGFloat(cos(phase)) * 140, y: geometry.size.height * 0.3)
-                    Color.black.opacity(0.42)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 1.5), value: assets.colors)
-        .allowsHitTesting(false)
-        .ignoresSafeArea()
+        MusicAmbientBackground(colors: assets.colors, paused: reduceMotion || scenePhase != .active)
+            .allowsHitTesting(false)
+            .ignoresSafeArea()
     }
 
     private func artwork(side: CGFloat) -> some View {
@@ -121,24 +98,25 @@ struct MusicPlayerScreen: View {
     }
 
     private var trackDetails: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: lyricsVisible ? .leading : .center, spacing: 8) {
             Text(displayedMedia?.title ?? "Choose a song")
-                .font(.system(size: lyricsVisible ? 32 : 52, weight: .bold))
-                .lineLimit(lyricsVisible ? 1 : 3)
+                .font(.system(size: lyricsVisible ? 30 : 34, weight: .bold))
+                .lineLimit(2)
             Text(displayedMedia?.artist ?? "")
-                .font(.system(size: lyricsVisible ? 26 : 36, weight: .medium))
+                .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(.white.opacity(0.7)).lineLimit(2)
             if !lyricsVisible, let album = displayedMedia?.album, !album.isEmpty {
                 Text(album).font(.system(size: 26)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
             }
         }
+        .multilineTextAlignment(lyricsVisible ? .leading : .center)
         .foregroundStyle(.white)
     }
 
     private var playbackControls: some View {
         VStack(spacing: 20) {
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
-                                onActivity: {}, seek: viewModel.seek)
+                                onActivity: {}, seek: viewModel.seek, accentColor: assets.accentColor)
             HStack(spacing: 24) {
                 control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
                     Task { await viewModel.toggleShuffle() }
@@ -148,7 +126,7 @@ struct MusicPlayerScreen: View {
                     Image(systemName: viewModel.state?.status == "playing" ? "pause.fill" : "play.fill")
                         .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
                 }
-                .buttonStyle(.borderedProminent).tint(.white.opacity(0.25)).focused($playFocused)
+                .buttonStyle(.borderedProminent).tint(assets.accentColor).foregroundStyle(.black).focused($playFocused)
                 .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                 .disabled(scrubbing)
                 control("forward.end.fill", label: "Next") { Task { await viewModel.next() } }
@@ -165,7 +143,7 @@ struct MusicPlayerScreen: View {
                     Text("Off").tag(0.0)
                     ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
                 }
-                .pickerStyle(.menu).frame(width: 210)
+                .pickerStyle(.menu).tint(assets.accentColor).frame(width: 210)
                 .accessibilityLabel("Crossfade duration")
             }
             .focusSection()
@@ -176,7 +154,8 @@ struct MusicPlayerScreen: View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 25, weight: .semibold)).frame(width: 48, height: 44)
         }
-        .buttonStyle(.bordered).tint(selected ? .pink : .white.opacity(0.12))
+        .buttonStyle(.bordered).tint(assets.accentColor.opacity(selected ? 0.65 : 0.16))
+        .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
     }
@@ -222,7 +201,7 @@ private struct MusicLyricsPane: View {
                     .font(.system(size: 17, weight: .semibold)).tracking(3).foregroundStyle(.white.opacity(0.5))
                 Spacer()
                 if !followPlayback && assets.lyrics.synchronized {
-                    Button("Follow song") { followPlayback = true }.buttonStyle(.bordered)
+                    Button("Follow song") { followPlayback = true }.buttonStyle(.bordered).tint(assets.accentColor)
                 }
             }
             if assets.lyricsLoading {
@@ -268,5 +247,38 @@ private struct MusicLyricsPane: View {
     private func scroll(_ reader: ScrollViewProxy) {
         guard followPlayback, let activeLine else { return }
         withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(activeLine, anchor: .center) }
+    }
+}
+
+// Isolate the timeline so playback updates do not restart ambient movement.
+private struct MusicAmbientBackground: View {
+    let colors: [Color]
+    let paused: Bool
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: paused)) { timeline in
+            let phase = paused ? 0 : timeline.date.timeIntervalSinceReferenceDate / 5
+            GeometryReader { geometry in
+                ZStack {
+                    LinearGradient(colors: colors + [.black], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Canvas { context, size in
+                        for index in 0..<3 {
+                            let angle = phase + Double(index) * 2.1
+                            let center = CGPoint(
+                                x: size.width * (0.5 + CGFloat(sin(angle)) * 0.4),
+                                y: size.height * (0.5 + CGFloat(cos(angle * 0.83)) * 0.38))
+                            let radius = size.width * (0.42 + CGFloat(sin(angle * 0.7)) * 0.08)
+                            let color = colors.isEmpty ? Color.indigo : colors[index % colors.count]
+                            let bounds = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+                            context.fill(Path(ellipseIn: bounds), with: .radialGradient(
+                                Gradient(colors: [color.opacity(0.95), color.opacity(0.55), color.opacity(0)]),
+                                center: center, startRadius: 0, endRadius: radius))
+                        }
+                    }
+                    .blendMode(.screen)
+                    Color.black.opacity(0.27)
+                }
+            }
+        }
+        .clipped()
     }
 }
