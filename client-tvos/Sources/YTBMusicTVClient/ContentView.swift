@@ -40,6 +40,7 @@ struct ContentView: View {
     @ObservedObject private var intentRouter = AppIntentRouter.shared
     @State private var selectedTab: AppTab = .home
     @State private var showingPlayer = false
+    @AppStorage("YTBMusicTV.musicLayout") private var musicLayout = true
     @State private var homeFocusRequestID = 0
     @State private var menuFocusRequestID = 0
 
@@ -109,11 +110,13 @@ struct ContentView: View {
                 .accessibilityHidden(showingPlayer)
 
                 if showingPlayer {
-                    PlayerScreen(
-                        viewModel: viewModel,
-                        l10n: l10n,
-                        onBack: returnFromPlayer
-                    )
+                    Group {
+                        if musicLayout {
+                            MusicPlayerScreen(viewModel: viewModel, l10n: l10n, onBack: returnFromPlayer)
+                        } else {
+                            PlayerScreen(viewModel: viewModel, l10n: l10n, onBack: returnFromPlayer)
+                        }
+                    }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .transition(.opacity.combined(with: .scale(scale: 1.015)))
                 }
@@ -1426,7 +1429,7 @@ private struct PlayerBottomBar: View {
     }
 }
 
-private struct PlayerProgressStrip: View {
+struct PlayerProgressStrip: View {
     @ObservedObject var progress: PlaybackProgress
     var l10n: L10n
     @Binding var scrubbing: Bool
@@ -2055,6 +2058,9 @@ private struct SettingsView: View {
     var l10n: L10n
     var returnToMenu: () -> Void
 
+    @AppStorage("YTBMusicTV.musicLayout") private var musicLayout = true
+    @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
+    @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
     @State private var deviceCode = ""
     @State private var isAssociating = false
     @FocusState private var connectionFocus: ConnectionFocus?
@@ -2206,6 +2212,18 @@ private struct SettingsView: View {
                             }
                         }
                     }
+                }
+
+                SettingsSection(title: "Music presentation") {
+                    Toggle("Apple Music style player", isOn: $musicLayout)
+                    Toggle("Animated album artwork", isOn: $motionArtwork)
+                    Picker("Crossfade", selection: $crossfadeSeconds) {
+                        Text("Off").tag(0.0)
+                        ForEach(1...12, id: \.self) { Text("\($0) seconds").tag(Double($0)) }
+                    }
+                    .pickerStyle(.menu)
+                    Text("Motion artwork and lyrics depend on available matches. Crossfade overlaps adjacent songs when the next stream is ready.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
 
                 SettingsSection(title: l10n.text("settings.features")) {

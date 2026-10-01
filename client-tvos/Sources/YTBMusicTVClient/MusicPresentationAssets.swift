@@ -1,0 +1,132 @@
+import AVKit
+import Foundation
+import SwiftUI
+import UIKit
+
+@MainActor
+final class MusicPresentationAssets: ObservableObject {
+    @Published var lyrics = MusicLyrics()
+    @Published var lyricsLoading = false
+    @Published var artworkImage: UIImage?
+    @Published var motionURL: URL?
+    @Published var colors: [Color] = [.indigo, .purple, .black]
+    private var lyricsCache: [String: MusicLyrics] = [:]
+    private var artworkCache: [String: MusicArtworkResult] = [:]
+    private var generation = UUID()
+
+    func load(_ media: MediaItem?, animated: Bool) async {
+        let token = UUID(); generation = token
+        lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
+        colors = [.indigo, .purple, .black]
+        guard let media else { lyricsLoading = false; return }
+        lyricsLoading = true
+        async let loadedLyrics: Void = loadLyrics(media, token: token)
+        async let loadedArtwork: Void = loadArtwork(media, animated: animated, token: token)
+        _ = await (loadedLyrics, loadedArtwork)
+    }
+
+    private func loadLyrics(_ media: MediaItem, token: UUID) async {
+        let result: MusicLyrics
+        if let cached = lyricsCache[media.id] { result = cached }
+        else { result = await MusicLookup.lyrics(for: media) }
+        guard !Task.isCancelled, generation == token else { return }
+        if lyricsCache.count > 50 { lyricsCache.removeAll() }
+        lyricsCache[media.id] = result
+        lyrics = result; lyricsLoading = false
+    }
+
+    private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
+        // Show the regular cover immediately; motion lookup never blocks music.
+        await loadImage(media.artworkUrl, token: token)
+        guard animated, !Task.isCancelled, generation == token else { return }
+        let result: MusicArtworkResult
+        if let cached = artworkCache[media.id] { result = cached }
+        else { result = await MusicLookup.artwork(for: media) }
+        guard !Task.isCancelled, generation == token else { return }
+        if artworkCache.count > 50 { artworkCache.removeAll() }
+        artworkCache[media.id] = result
+        motionURL = result.motion
+        if result.still != media.artworkUrl { await loadImage(result.still, token: token) }
+    }
+
+    private func loadImage(_ url: URL?, token: UUID) async {
+        guard let url, let data = try? await MusicLookup.fetch(url), let image = UIImage(data: data),
+              generation == token, !Task.isCancelled else { return }
+        artworkImage = image
+        colors = Self.palette(image)
+    }
+
+    static func palette(_ image: UIImage) -> [Color] {
+        let dimension = 24
+        var pixels = [UInt8](repeating: 0, count: dimension * dimension * 4)
+        guard let cg = image.cgImage else { return [.indigo, .purple, .black] }
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: dimension, height: dimension,
+                bitsPerComponent: 8, bytesPerRow: dimension * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: CGFloat(dimension), height: CGFloat(dimension)))
+            return true
+        }
+        guard rendered else { return [.indigo, .purple, .black] }
+        var buckets: [Int: (r: Double, g: Double, b: Double, count: Int)] = [:]
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            guard pixels[index + 3] > 220 else { continue }
+            let r = Int(pixels[index]), g = Int(pixels[index + 1]), b = Int(pixels[index + 2])
+            guard max(r, g, b) > 28, min(r, g, b) < 235 else { continue }
+            let key = (r / 32) * 64 + (g / 32) * 8 + b / 32
+            let old = buckets[key] ?? (0, 0, 0, 0)
+            buckets[key] = (old.r + Double(r), old.g + Double(g), old.b + Double(b), old.count + 1)
+        }
+        let sorted = buckets.values.sorted { $0.count > $1.count }.prefix(3)
+        let result = sorted.map { bucket in
+            Color(red: bucket.r / Double(bucket.count) / 255, green: bucket.g / Double(bucket.count) / 255,
+                  blue: bucket.b / Double(bucket.count) / 255)
+        }
+        return result.isEmpty ? [.indigo, .purple, .black] : result
+    }
+}
+
+struct MusicMotionArtwork: UIViewRepresentable {
+    let url: URL
+    let active: Bool
+
+    final class ArtworkView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        let player = AVQueuePlayer()
+        var looper: AVPlayerLooper?
+        var displayObserver: NSKeyValueObservation?
+        var url: URL?
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            player.isMuted = true
+            player.volume = 0
+            playerLayer.player = player
+            playerLayer.videoGravity = .resizeAspectFill
+            isUserInteractionEnabled = false
+            playerLayer.isHidden = true
+            displayObserver = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] layer, _ in
+                let ready = layer.isReadyForDisplay
+                DispatchQueue.main.async { self?.playerLayer.isHidden = !ready }
+            }
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func update(url: URL, active: Bool) {
+            if self.url != url {
+                player.pause(); looper?.disableLooping(); player.removeAllItems()
+                self.url = url
+                playerLayer.isHidden = true
+                looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+            }
+            if active { player.play() } else { player.pause() }
+        }
+        func stop() {
+            displayObserver?.invalidate(); displayObserver = nil
+            player.pause(); looper?.disableLooping(); looper = nil; player.removeAllItems()
+        }
+    }
+
+    func makeUIView(context: Context) -> ArtworkView { ArtworkView(frame: .zero) }
+    func updateUIView(_ view: ArtworkView, context: Context) { view.update(url: url, active: active) }
+    static func dismantleUIView(_ view: ArtworkView, coordinator: ()) { view.stop() }
+}

@@ -53,7 +53,17 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var isUpdatingRating = false
     @Published var errorMessage: String?
 
-    let player = AVPlayer()
+    @Published private(set) var player = AVPlayer()
+    private var standbyPlayer: AVPlayer?
+    private var fadingOutPlayer: AVPlayer?
+    private var crossfadeTask: Task<Void, Never>?
+    private var crossfadeGeneration = UUID()
+    private var crossfadeSeconds: Double {
+        let defaults = UserDefaults.standard
+        let value = defaults.object(forKey: "YTBMusicTV.crossfadeSeconds") == nil
+            ? 5.0 : defaults.double(forKey: "YTBMusicTV.crossfadeSeconds")
+        return min(12, max(0, value))
+    }
     let playbackProgress = PlaybackProgress()
 
     private var client: APIClient?
@@ -110,6 +120,7 @@ final class PlayerViewModel: ObservableObject {
         timeControlObserver?.invalidate()
         itemStatusObserver?.invalidate()
         nextPlaybackTask?.cancel()
+        crossfadeTask?.cancel()
         configUpdateTask?.cancel()
         artworkLoadTask?.cancel()
         for (command, target) in remoteCommandTargets {
@@ -200,7 +211,12 @@ final class PlayerViewModel: ObservableObject {
         update(&nextConfig)
         guard nextConfig != config else { return }
 
+        let playbackChanged = config?.playback != nextConfig.playback
         config = nextConfig
+        if playbackChanged {
+            cancelCrossfade()
+            scheduleNextPlaybackPrecache()
+        }
         configRevision &+= 1
         let revision = configRevision
         configUpdateTask?.cancel()
@@ -379,14 +395,16 @@ final class PlayerViewModel: ObservableObject {
 
         if nextState.status == "playing" {
             player.pause()
+            fadingOutPlayer?.pause()
             nextState.status = "paused"
             isPreparingPlayback = false
         } else {
             if playbackDurationMs > 0, playbackTimeMs >= playbackDurationMs - 500 {
                 seek(to: 0)
             }
-            player.volume = 1
+            if crossfadeTask == nil { player.volume = 1 }
             player.playImmediately(atRate: 1)
+            fadingOutPlayer?.playImmediately(atRate: 1)
             nextState.status = "playing"
             isPreparingPlayback = player.timeControlStatus != .playing
         }
@@ -395,6 +413,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func next() async {
+        cancelCrossfade()
         guard let state else { return }
 
         if state.repeatMode == "one" {
@@ -420,6 +439,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func previous() async {
+        cancelCrossfade()
         if playbackTimeMs > 3000 {
             seek(to: 0)
             return
@@ -438,6 +458,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func toggleShuffle() async {
+        cancelCrossfade()
         guard var nextState = state else { return }
         nextState.shuffle.toggle()
         state = nextState
@@ -445,6 +466,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func toggleRepeatOne() async {
+        cancelCrossfade()
         guard var nextState = state else { return }
         nextState.repeatMode = nextState.repeatMode == "one" ? "off" : "one"
         state = nextState
@@ -460,6 +482,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func seek(to milliseconds: Int) {
+        cancelCrossfade()
         let upperBound = playbackDurationMs > 0 ? playbackDurationMs : milliseconds
         let targetMs = min(max(0, milliseconds), upperBound)
         playbackTimeMs = targetMs
@@ -639,10 +662,11 @@ final class PlayerViewModel: ObservableObject {
         client: APIClient
     ) async throws -> ResolvedPlaybackMedia {
         if let videoID = media.videoId {
-            let resolved = try await client.resolve(mediaId: videoID)
+            let resolved = try await client.resolve(mediaId: videoID, preferVideo: config?.playback.preferVideo)
             var merged = merge(media, with: resolved.media)
             let playbackURLs = playbackURLs(for: resolved, streamMode: config?.playback.streamMode)
-            let adaptiveURLs = adaptivePlaybackURLs(for: resolved, streamMode: config?.playback.streamMode)
+            let adaptiveURLs = config?.playback.preferVideo == true
+                ? adaptivePlaybackURLs(for: resolved, streamMode: config?.playback.streamMode) : nil
             let playbackURL = playbackURLs.primary
             merged.playbackUrl = playbackURL
             return (
@@ -651,7 +675,7 @@ final class PlayerViewModel: ObservableObject {
                 playbackURLs.fallback,
                 adaptiveURLs?.video,
                 adaptiveURLs?.audio,
-                resolved.hasVideo == true,
+                config?.playback.preferVideo == true && resolved.hasVideo == true,
                 resolved.mimeType
             )
         }
@@ -727,6 +751,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func replacePlayerItem(item: AVPlayerItem) {
+        cancelCrossfade()
         player.pause()
         player.replaceCurrentItem(with: item)
         installStatusObserver(for: item)
@@ -739,7 +764,7 @@ final class PlayerViewModel: ObservableObject {
     private func observeTimeControlStatus() {
         timeControlObserver = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.player === player else { return }
                 switch player.timeControlStatus {
                 case .playing:
                     self.isPreparingPlayback = false
@@ -759,7 +784,7 @@ final class PlayerViewModel: ObservableObject {
     private func installTimeObserverIfNeeded() {
         guard timeObserver == nil else { return }
         timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 1, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
@@ -774,6 +799,7 @@ final class PlayerViewModel: ObservableObject {
                 if durationSeconds.isFinite, durationSeconds > 0 {
                     self.playbackDurationMs = Int(durationSeconds * 1000)
                 }
+                self.maybeBeginCrossfade()
                 self.updateNowPlayingInfo()
             }
         }
@@ -789,7 +815,8 @@ final class PlayerViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                await self?.next()
+                guard let self, self.player.currentItem === item, self.crossfadeTask == nil else { return }
+                await self.next()
             }
         }
     }
@@ -798,14 +825,14 @@ final class PlayerViewModel: ObservableObject {
         itemStatusObserver?.invalidate()
         itemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.player.currentItem === item else { return }
                 switch item.status {
                 case .readyToPlay:
                     let durationSeconds = CMTimeGetSeconds(item.duration)
                     if durationSeconds.isFinite, durationSeconds > 0 {
                         self.playbackDurationMs = Int(durationSeconds * 1000)
                     }
-                    self.player.volume = 1
+                    if self.crossfadeTask == nil { self.player.volume = 1 }
                 case .failed:
                     if self.retryFallbackPlayback(failedItem: item) {
                         return
@@ -1127,6 +1154,8 @@ final class PlayerViewModel: ObservableObject {
     private func scheduleNextPlaybackPrecache() {
         nextPlaybackTask?.cancel()
         nextPlaybackTask = nil
+        standbyPlayer?.pause()
+        standbyPlayer = nil
         nextPlaybackCache = nil
 
         guard let client,
@@ -1160,6 +1189,12 @@ final class PlayerViewModel: ObservableObject {
                     resolved: resolved,
                     item: item
                 )
+                if let item {
+                    let prepared = AVPlayer(playerItem: item)
+                    prepared.volume = 0
+                    prepared.automaticallyWaitsToMinimizeStalling = true
+                    self.standbyPlayer = prepared
+                }
             } catch {
                 guard !Task.isCancelled,
                       self.playbackRequestID == requestID,
@@ -1168,6 +1203,109 @@ final class PlayerViewModel: ObservableObject {
                 self.nextPlaybackCache = nil
             }
         }
+    }
+
+    // Two AVPlayers overlap only when the next stream is ready. Metadata and lyric time
+    // switch to the incoming deck when it becomes the active player.
+    private func maybeBeginCrossfade() {
+        guard crossfadeSeconds > 0, crossfadeTask == nil,
+              state?.status == "playing", state?.repeatMode != "one",
+              player.timeControlStatus == .playing, playbackDurationMs > 0,
+              let cache = nextPlaybackCache, cache.requestID == playbackRequestID,
+              let incoming = standbyPlayer, incoming.currentItem?.status == .readyToPlay,
+              cache.mediaID != state?.currentMediaId else { return }
+        let remaining = Double(playbackDurationMs - playbackTimeMs) / 1000
+        guard remaining > 0.3, remaining <= crossfadeSeconds else { return }
+        let generation = UUID(); crossfadeGeneration = generation
+        let requestID = playbackRequestID
+        let outgoing = player
+        let fadeDuration = min(crossfadeSeconds, remaining)
+        crossfadeTask = Task { @MainActor [weak self] in
+            incoming.volume = 0
+            incoming.play()
+            // Never fade away a playing song until the incoming deck is producing playback.
+            for _ in 0..<100 {
+                guard !Task.isCancelled else { incoming.pause(); return }
+                if incoming.timeControlStatus == .playing { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard let self, !Task.isCancelled, self.crossfadeGeneration == generation,
+                  self.playbackRequestID == requestID else { incoming.pause(); return }
+            guard incoming.timeControlStatus == .playing, self.state?.status == "playing" else {
+                incoming.pause()
+                incoming.seek(to: .zero)
+                self.crossfadeTask = nil
+                let oldTime = CMTimeGetSeconds(outgoing.currentTime())
+                let oldDuration = CMTimeGetSeconds(outgoing.currentItem?.duration ?? .invalid)
+                if self.playbackTimeMs >= self.playbackDurationMs ||
+                    (oldTime.isFinite && oldDuration.isFinite && oldTime >= oldDuration - 0.1) {
+                    await self.next()
+                }
+                return
+            }
+            let outgoingTime = CMTimeGetSeconds(outgoing.currentTime())
+            let remainingAtStart = outgoingTime.isFinite
+                ? max(0.1, Double(self.playbackDurationMs) / 1000 - outgoingTime) : fadeDuration
+            let effectiveDuration = min(fadeDuration, remainingAtStart)
+            self.promoteCrossfadePlayer(incoming, outgoing: outgoing, cache: cache)
+            let incomingStart = CMTimeGetSeconds(incoming.currentTime())
+            let began = incomingStart.isFinite ? incomingStart : 0
+            while !Task.isCancelled, self.crossfadeGeneration == generation {
+                let now = CMTimeGetSeconds(incoming.currentTime())
+                let elapsed = now.isFinite ? max(0, now - began) : 0
+                let progress = min(1, elapsed / max(0.1, effectiveDuration))
+                incoming.volume = Float(sin(progress * .pi / 2))
+                outgoing.volume = Float(cos(progress * .pi / 2))
+                if progress >= 1 { break }
+                if incoming.currentItem?.status == .failed { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard self.crossfadeGeneration == generation else { return }
+            outgoing.pause(); outgoing.replaceCurrentItem(with: nil)
+            incoming.volume = 1
+            self.fadingOutPlayer = nil
+            self.crossfadeTask = nil
+        }
+    }
+
+    private func promoteCrossfadePlayer(_ incoming: AVPlayer, outgoing: AVPlayer, cache: NextPlaybackCache) {
+        if let timeObserver { outgoing.removeTimeObserver(timeObserver); self.timeObserver = nil }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
+        itemStatusObserver?.invalidate()
+        timeControlObserver?.invalidate()
+        if let oldID = state?.currentMediaId { playbackHistory.append(oldID) }
+        let oldState = state
+        let resolved = cache.resolved
+        var queue = oldState?.queue ?? []
+        if let index = queue.firstIndex(where: { $0.id == resolved.media.id }) { queue[index] = resolved.media }
+        player = incoming
+        standbyPlayer = nil
+        fadingOutPlayer = outgoing
+        playbackRequestID = UUID()
+        let incomingTime = CMTimeGetSeconds(incoming.currentTime())
+        playbackTimeMs = incomingTime.isFinite ? max(0, Int(incomingTime * 1000)) : 0
+        playbackDurationMs = resolved.media.durationMs
+        currentStreamHasVideo = resolved.hasVideo
+        state = PlayerState(status: "playing", currentTimeMs: playbackTimeMs,
+            currentMediaId: resolved.media.id, currentMedia: resolved.media, queue: queue,
+            shuffle: oldState?.shuffle ?? false, repeatMode: oldState?.repeatMode ?? "off")
+        fallbackPlaybackURLs = resolved.fallbackURL.map { [$0] } ?? []
+        audioFallbackAttempted = false
+        if let item = incoming.currentItem { installStatusObserver(for: item); installEndObserver(for: item) }
+        observeTimeControlStatus()
+        installTimeObserverIfNeeded()
+        updateNowPlayingInfo()
+        scheduleNextPlaybackPrecache()
+    }
+
+    private func cancelCrossfade() {
+        crossfadeGeneration = UUID()
+        crossfadeTask?.cancel()
+        crossfadeTask = nil
+        fadingOutPlayer?.pause()
+        fadingOutPlayer?.replaceCurrentItem(with: nil)
+        fadingOutPlayer = nil
+        player.volume = 1
     }
 
     private func preparePlayerItem(for resolved: ResolvedPlaybackMedia) async -> AVPlayerItem? {
@@ -1187,6 +1325,9 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func invalidateNextPlaybackCache() {
+        cancelCrossfade()
+        standbyPlayer?.pause()
+        standbyPlayer = nil
         nextPlaybackTask?.cancel()
         nextPlaybackTask = nil
         nextPlaybackCandidate = nil
@@ -1212,6 +1353,8 @@ final class PlayerViewModel: ObservableObject {
               cache.requestID == playbackRequestID,
               cache.mediaID == media.id
         else { return nil }
+        standbyPlayer?.replaceCurrentItem(with: nil)
+        standbyPlayer = nil
         return PrefetchedPlaybackMedia(resolved: cache.resolved, item: cache.item)
     }
 

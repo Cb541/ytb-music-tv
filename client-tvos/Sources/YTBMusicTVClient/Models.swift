@@ -119,3 +119,74 @@ struct RatingResult: Codable, Equatable {
     var videoId: String
     var likeStatus: String
 }
+
+// A malformed optional provider URL must not invalidate an otherwise playable song.
+extension KeyedDecodingContainer {
+    func tolerantURL(forKey key: Key) -> URL? {
+        guard let text = try? decode(String.self, forKey: key),
+              let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.host?.isEmpty == false else { return nil }
+        return url
+    }
+
+    func tolerantInt(forKey key: Key, fallback: Int = 0) -> Int {
+        if let number = try? decode(Int.self, forKey: key) { return number }
+        if let text = try? decode(String.self, forKey: key), let number = Int(text) { return number }
+        return fallback
+    }
+}
+
+extension MediaItem {
+    enum CodingKeys: String, CodingKey {
+        case id, videoId, browseId, playlistId, type, title, artist, album, durationMs
+        case artworkUrl, streamUrl, sourceUrl, playbackUrl, likeStatus, tags
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        videoId = try? c.decode(String.self, forKey: .videoId)
+        browseId = try? c.decode(String.self, forKey: .browseId)
+        playlistId = try? c.decode(String.self, forKey: .playlistId)
+        type = try? c.decode(String.self, forKey: .type)
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        artist = (try? c.decode(String.self, forKey: .artist)) ?? ""
+        album = try? c.decode(String.self, forKey: .album)
+        durationMs = max(0, c.tolerantInt(forKey: .durationMs))
+        artworkUrl = c.tolerantURL(forKey: .artworkUrl)
+        streamUrl = c.tolerantURL(forKey: .streamUrl)
+        sourceUrl = c.tolerantURL(forKey: .sourceUrl)
+        playbackUrl = c.tolerantURL(forKey: .playbackUrl)
+        likeStatus = (try? c.decode(String.self, forKey: .likeStatus)) ?? "INDIFFERENT"
+        tags = (try? c.decode([String].self, forKey: .tags)) ?? []
+    }
+}
+
+extension ResolvedStream {
+    enum CodingKeys: String, CodingKey {
+        case videoId, directUrl, mimeType, hasAudio, hasVideo, quality, expiresAt, proxyUrl
+        case adaptiveVideoUrl, adaptiveAudioUrl, adaptiveVideoProxyUrl, adaptiveAudioProxyUrl, media
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        videoId = (try? c.decode(String.self, forKey: .videoId)) ?? ""
+        proxyUrl = c.tolerantURL(forKey: .proxyUrl)
+        guard let playableURL = c.tolerantURL(forKey: .directUrl) ?? proxyUrl else {
+            throw DecodingError.dataCorruptedError(forKey: .directUrl, in: c,
+                debugDescription: "The server returned no usable HTTP playback URL (directUrl or proxyUrl).")
+        }
+        directUrl = playableURL
+        mimeType = try? c.decode(String.self, forKey: .mimeType)
+        hasAudio = try? c.decode(Bool.self, forKey: .hasAudio)
+        hasVideo = try? c.decode(Bool.self, forKey: .hasVideo)
+        quality = try? c.decode(String.self, forKey: .quality)
+        expiresAt = try? c.decode(String.self, forKey: .expiresAt)
+        adaptiveVideoUrl = c.tolerantURL(forKey: .adaptiveVideoUrl)
+        adaptiveAudioUrl = c.tolerantURL(forKey: .adaptiveAudioUrl)
+        adaptiveVideoProxyUrl = c.tolerantURL(forKey: .adaptiveVideoProxyUrl)
+        adaptiveAudioProxyUrl = c.tolerantURL(forKey: .adaptiveAudioProxyUrl)
+        media = try? c.decode(MediaItem.self, forKey: .media)
+    }
+}

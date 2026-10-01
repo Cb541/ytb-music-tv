@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 struct APIClient {
     let baseURL: URL
@@ -70,7 +73,11 @@ struct APIClient {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        do {
+            return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw APIError.decoding(path: path, detail: error.fieldDescription)
+        }
     }
 
     private func post<T: Decodable, Body: Encodable>(_ path: String, body: Body) async throws -> T {
@@ -80,7 +87,11 @@ struct APIClient {
         request.httpBody = try JSONEncoder.ytbMusicTV.encode(body)
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        do {
+            return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw APIError.decoding(path: path, detail: error.fieldDescription)
+        }
     }
 
     private func patch<T: Decodable, Body: Encodable>(_ path: String, body: Body) async throws -> T {
@@ -90,7 +101,11 @@ struct APIClient {
         request.httpBody = try JSONEncoder.ytbMusicTV.encode(body)
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        do {
+            return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw APIError.decoding(path: path, detail: error.fieldDescription)
+        }
     }
 
     private func put<T: Decodable, Body: Encodable>(_ path: String, body: Body) async throws -> T {
@@ -100,7 +115,11 @@ struct APIClient {
         request.httpBody = try JSONEncoder.ytbMusicTV.encode(body)
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
-        return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        do {
+            return try JSONDecoder.ytbMusicTV.decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw APIError.decoding(path: path, detail: error.fieldDescription)
+        }
     }
 
     private func request(_ path: String, queryItems: [URLQueryItem] = []) -> URLRequest {
@@ -152,10 +171,13 @@ private struct RatingRequest: Encodable {
 
 enum APIError: LocalizedError {
     case invalidResponse
+    case decoding(path: String, detail: String)
     case http(status: Int, message: String)
 
     var errorDescription: String? {
         switch self {
+        case let .decoding(path, detail):
+            return "Server response \(path): \(detail)"
         case .invalidResponse:
             return "Invalid server response."
         case let .http(status, message):
@@ -177,5 +199,19 @@ extension JSONEncoder {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .useDefaultKeys
         return encoder
+    }
+}
+
+private extension DecodingError {
+    var fieldDescription: String {
+        let context: Context
+        switch self {
+        case .typeMismatch(_, let c), .valueNotFound(_, let c), .dataCorrupted(let c): context = c
+        case .keyNotFound(let key, let c):
+            return "Missing field " + (c.codingPath + [key]).map(\.stringValue).joined(separator: ".")
+        @unknown default: return "Unable to decode playback response."
+        }
+        let field = context.codingPath.map(\.stringValue).joined(separator: ".")
+        return (field.isEmpty ? "JSON" : field) + ": " + context.debugDescription
     }
 }

@@ -1,0 +1,40 @@
+name: Custom Apple TV Music Player
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [custom-music-player, "custom-music-player-*"]
+    paths:
+      - 'client-tvos/**'
+      - '.github/workflows/custom-music-player.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-music-player-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-version
+      - name: Test playback decoding and lyric timing
+        run: bash client-tvos/test-models.sh
+      - name: Build unsigned Apple TV IPA
+        working-directory: client-tvos
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          VERSION: '0.1.0'
+          OUTPUT_IPA: ${{ github.workspace }}/YTBMusicTV-custom-music-player-unsigned.ipa
+        run: bash build-ipa.sh
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: YTBMusicTV-custom-music-player-unsigned
+          path: YTBMusicTV-custom-music-player-unsigned.ipa
+          if-no-files-found: error
