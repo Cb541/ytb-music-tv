@@ -1,4 +1,5 @@
 import AVKit
+import CoreImage.CIFilterBuiltins
 import Foundation
 import SwiftUI
 import UIKit
@@ -9,6 +10,7 @@ final class MusicPresentationAssets: ObservableObject {
     @Published var lyricsLoading = false
     @Published var artworkImage: UIImage?
     @Published var motionURL: URL?
+    @Published var backgroundVeil = 0.34
     @Published var colors: [Color] = [.indigo, .purple, .black]
     var accentColor: Color {
         let base = UIColor(colors.first ?? .indigo)
@@ -24,6 +26,7 @@ final class MusicPresentationAssets: ObservableObject {
         let token = UUID(); generation = token
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         colors = [.indigo, .purple, .black]
+        backgroundVeil = 0.34
         guard let media else { lyricsLoading = false; return }
         lyricsLoading = true
         async let loadedLyrics: Void = loadLyrics(media, token: token)
@@ -32,13 +35,25 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadLyrics(_ media: MediaItem, token: UUID) async {
-        let result: MusicLyrics
-        if let cached = lyricsCache[media.id] { result = cached }
-        else { result = await MusicLookup.lyrics(for: media) }
+        if let cached = lyricsCache[media.id], cached.wordSynchronized {
+            guard generation == token else { return }
+            lyrics = cached; lyricsLoading = false
+            return
+        }
+        // Display line lyrics as soon as they arrive, then upgrade to real word
+        // timestamps without keeping the pane blocked by a slower provider.
+        async let rich = MusicLookup.lyricsPlus(for: media)
+        let base: MusicLyrics
+        if let cached = lyricsCache[media.id] { base = cached }
+        else { base = await MusicLookup.lrclibLyrics(for: media) }
         guard !Task.isCancelled, generation == token else { return }
+        lyrics = base; lyricsLoading = false
+        let words = await rich
+        guard !Task.isCancelled, generation == token else { return }
+        let result = words.wordSynchronized || (!base.synchronized && !words.lines.isEmpty) ? words : base
         if lyricsCache.count > 50 { lyricsCache.removeAll() }
         lyricsCache[media.id] = result
-        lyrics = result; lyricsLoading = false
+        lyrics = result
     }
 
     private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
@@ -62,6 +77,34 @@ final class MusicPresentationAssets: ObservableObject {
               generation == token, !Task.isCancelled else { return }
         artworkImage = image
         colors = Self.palette(image)
+        backgroundVeil = Self.balancedVeil(image)
+    }
+
+    static func balancedVeil(_ image: UIImage) -> Double {
+        guard let cg = image.cgImage else { return 0.34 }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { bytes in
+            let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                    space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.draw(cg, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        let rgb = pixel.prefix(3).map { Double($0) / 255 }
+        let tint = [0.024, 0.04, 0.028], veil = [3.0 / 255, 7.0 / 255, 4.0 / 255]
+        func luminance(_ channels: [Double]) -> Double {
+            let linear = channels.map { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
+            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+        }
+        for step in 0...48 {
+            let alpha = 0.34 + Double(step) * 0.01
+            let backdrop = (0..<3).map { index in
+                let tinted = rgb[index] * 0.58 + tint[index] * 0.42
+                return (tinted * (1 - alpha) + veil[index] * alpha) * 0.82 + tint[index] * 0.18
+            }
+            let light = luminance(backdrop)
+            if 1.05 / (light + 0.05) >= 4.5 && (luminance([0.65, 0.65, 0.65]) + 0.05) / (light + 0.05) >= 3 { return alpha }
+        }
+        return 0.82
     }
 
     static func palette(_ image: UIImage) -> [Color] {
@@ -166,4 +209,100 @@ struct MusicMotionArtwork: UIViewRepresentable {
     func makeUIView(context: Context) -> ArtworkView { ArtworkView(frame: .zero) }
     func updateUIView(_ view: ArtworkView, context: Context) { view.update(url: url, active: active) }
     static func dismantleUIView(_ view: ArtworkView, coordinator: ()) { view.stop() }
+}
+
+// A native analogue of Orchard's blurred-artwork warp, rather than palette blobs.
+struct MusicWarpedArtwork: UIViewRepresentable {
+    let image: UIImage
+    let active: Bool
+
+    final class WarpView: UIView {
+        private let context = CIContext(options: [.cacheIntermediates: false])
+        private let renderBounds = CGRect(x: 0, y: 0, width: 480, height: 270)
+        private var sourceImage: UIImage?
+        private var blurred: CIImage?
+        private var displayLink: CADisplayLink?
+        private var phase = 0.0
+        private var previousTime: CFTimeInterval?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            layer.contentsGravity = .resize
+            clipsToBounds = true
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        func update(image: UIImage, active: Bool) {
+            if sourceImage !== image {
+                sourceImage = image
+                prepare(image)
+                render()
+            }
+            if active && displayLink == nil {
+                let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+                link.preferredFramesPerSecond = 30
+                link.add(to: .main, forMode: .common)
+                displayLink = link
+            } else if !active {
+                stop()
+            }
+        }
+
+        private func prepare(_ image: UIImage) {
+            guard let cg = image.cgImage else { blurred = nil; return }
+            let input = CIImage(cgImage: cg)
+            // Orchard uses a 1.32 overscan and a heavily blurred source.
+            let scale = max(renderBounds.width / input.extent.width, renderBounds.height / input.extent.height) * 1.32
+            let scaled = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let centered = scaled.transformed(by: CGAffineTransform(
+                translationX: (renderBounds.width - scaled.extent.width) / 2,
+                y: (renderBounds.height - scaled.extent.height) / 2))
+            let softened = centered.clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 22])
+                .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.24])
+                .cropped(to: renderBounds)
+            // Bake the blur once per cover; only spatial distortion runs each frame.
+            blurred = context.createCGImage(softened, from: renderBounds).map { CIImage(cgImage: $0).clampedToExtent() }
+        }
+
+        @objc private func tick(_ link: CADisplayLink) {
+            if let previousTime { phase += min(0.1, link.timestamp - previousTime) * 0.28 * 1.38 }
+            previousTime = link.timestamp
+            render()
+        }
+
+        private func render() {
+            guard let blurred else { return }
+            let width = renderBounds.width, height = renderBounds.height
+            let twirl = CIFilter.twirlDistortion()
+            twirl.inputImage = blurred
+            twirl.center = CGPoint(x: width * (0.5 + 0.3 * sin(phase * 0.79)),
+                                   y: height * (0.5 + 0.32 * cos(phase * 0.91)))
+            twirl.radius = Float(width * 0.82)
+            twirl.angle = Float(sin(phase * 0.87) * 1.6 * 0.92)
+            let bump = CIFilter.bumpDistortion()
+            bump.inputImage = twirl.outputImage
+            bump.center = CGPoint(x: width * (0.5 + 0.34 * cos(phase * 1.11)),
+                                  y: height * (0.5 + 0.34 * sin(phase * 0.73)))
+            bump.radius = Float(width * 0.7)
+            bump.scale = Float(sin(phase * 0.97) * 0.65 * 0.92)
+            guard let output = bump.outputImage,
+                  let cg = context.createCGImage(output, from: renderBounds) else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.contents = cg
+            CATransaction.commit()
+        }
+
+        func stop() {
+            displayLink?.invalidate()
+            displayLink = nil
+            previousTime = nil
+        }
+    }
+
+    func makeUIView(context: Context) -> WarpView { WarpView(frame: .zero) }
+    func updateUIView(_ view: WarpView, context: Context) { view.update(image: image, active: active) }
+    static func dismantleUIView(_ view: WarpView, coordinator: ()) { view.stop() }
 }

@@ -1436,6 +1436,7 @@ struct PlayerProgressStrip: View {
     var onActivity: () -> Void
     var seek: (Int) -> Void
     var accentColor: Color = .red
+    var showsBackground = true
 
     var body: some View {
         ProgressStrip(
@@ -1445,7 +1446,8 @@ struct PlayerProgressStrip: View {
             scrubbing: $scrubbing,
             onActivity: onActivity,
             seek: seek,
-            accentColor: accentColor
+            accentColor: accentColor,
+            showsBackground: showsBackground
         )
     }
 }
@@ -1614,6 +1616,7 @@ private struct ProgressStrip: View {
     var onActivity: () -> Void
     var seek: (Int) -> Void
     var accentColor: Color = .red
+    var showsBackground = true
 
     @State private var scrubMs = 0
     @State private var scrubRunDirection: ScrubDirection?
@@ -1664,15 +1667,7 @@ private struct ProgressStrip: View {
     @ViewBuilder
     private var progressControl: some View {
         Button(action: handleButtonSelect) {
-            progressContents
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .glassSurface(
-                    cornerRadius: 16,
-                    interactive: true,
-                    emphasized: focused || scrubbing,
-                    highlightColor: scrubbing ? accentColor : .white
-                )
+            progressLabel
         }
         .overlay {
             #if os(tvOS)
@@ -1685,6 +1680,25 @@ private struct ProgressStrip: View {
                     )
                 }
             #endif
+        }
+    }
+
+    @ViewBuilder
+    private var progressLabel: some View {
+        if showsBackground {
+            progressContents
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .glassSurface(
+                    cornerRadius: 16,
+                    interactive: true,
+                    emphasized: focused || scrubbing,
+                    highlightColor: scrubbing ? accentColor : .white
+                )
+        } else {
+            progressContents
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
         }
     }
 
@@ -2596,7 +2610,7 @@ private struct AdaptiveGlassButton: ViewModifier {
     }
 }
 
-private struct RemoteButtonStyle: ButtonStyle {
+struct RemoteButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.78 : 1)

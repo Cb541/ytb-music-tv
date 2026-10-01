@@ -1,15 +1,24 @@
 import Foundation
 
+struct MusicLyricWord: Equatable {
+    let text: String
+    let start: Double
+    let end: Double
+}
+
 struct MusicLyricLine: Identifiable, Equatable {
     let id: Int
     let time: Double?
     let text: String
+    var words: [MusicLyricWord] = []
 }
 
 struct MusicLyrics: Equatable {
     var lines: [MusicLyricLine] = []
     var instrumental = false
     var synchronized: Bool { lines.contains { $0.time != nil } }
+
+    var wordSynchronized: Bool { lines.contains { !$0.words.isEmpty } }
 
     static func parse(synced: String?, plain: String?, instrumental: Bool) -> MusicLyrics {
         let pattern = #"\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]"#

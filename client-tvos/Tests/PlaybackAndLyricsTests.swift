@@ -79,6 +79,18 @@ enum PlaybackAndLyricsTests {
         let catalog = Data(#"{"results":[{"trackName":"Other","artistName":"Artist","collectionName":"Wrong"},{"trackName":"Song","artistName":"Artist","collectionName":"Recovered Album","trackTimeMillis":180000}]}"#.utf8)
         precondition(MusicLookup.discoveredAlbum(catalog, title: "Song", artist: "Artist", durationMs: 181000) == "Recovered Album")
         precondition(MusicLookup.discoveredAlbum(catalog, title: "Song", artist: "Artist", durationMs: 220000) == nil)
+        let wordTimed = MusicLookup.parseLyricsPlus(Data(#"{"type":"WORD","lyrics":[{"time":1000,"duration":3000,"text":"Hello world","syllabus":[{"text":"Hello ","time":1000,"duration":900},{"text":"world","time":2100,"duration":1200},{"text":"Adlib","time":1500,"duration":500,"isBackground":true}]}]}"#.utf8))
+        precondition(wordTimed.wordSynchronized)
+        precondition(wordTimed.lines[0].words.count == 2)
+        precondition(wordTimed.lines[0].words[0].start == 1 && wordTimed.lines[0].words[0].end == 1.9)
+        precondition(abs(wordTimed.lines[0].words[1].end - 3.3) < 0.0001)
+        precondition(wordTimed.activeLine(at: 0.9) == nil && wordTimed.activeLine(at: 2.2) == 0)
+        let spacedWords = MusicLookup.parseLyricsPlus(Data(#"{"type":"WORD","lyrics":[{"time":"0","duration":3000,"text":"One two","words":[{"text":"One","time":"0"},{"text":"two","time":1000}]}]}"#.utf8))
+        precondition(spacedWords.wordSynchronized && spacedWords.lines[0].words.map(\.text).joined() == "One two")
+        precondition(spacedWords.lines[0].words[0].end == 1 && spacedWords.lines[0].words[1].end == 3)
+        let badWords = MusicLookup.parseLyricsPlus(Data(#"{"type":"WORD","lyrics":[{"time":1000,"text":"Actual lyric","words":[{"text":"Wrong lyric","time":1000}]}]}"#.utf8))
+        precondition(badWords.synchronized && !badWords.wordSynchronized && badWords.lines[0].text == "Actual lyric")
+        precondition(!untimedPlus.wordSynchronized && !timed.wordSynchronized)
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

@@ -786,7 +786,7 @@ final class PlayerViewModel: ObservableObject {
         guard timeObserver == nil else { return }
         timeObserverPlayer = player
         timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.05, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
@@ -794,6 +794,7 @@ final class PlayerViewModel: ObservableObject {
                 let seconds = CMTimeGetSeconds(time)
                 guard seconds.isFinite else { return }
 
+                let previousSecond = self.playbackTimeMs / 1000
                 let currentMs = max(0, Int(seconds * 1000))
                 self.playbackTimeMs = currentMs
 
@@ -802,7 +803,7 @@ final class PlayerViewModel: ObservableObject {
                     self.playbackDurationMs = Int(durationSeconds * 1000)
                 }
                 self.maybeBeginCrossfade()
-                self.updateNowPlayingInfo()
+                if currentMs / 1000 != previousSecond { self.updateNowPlayingInfo() }
             }
         }
     }

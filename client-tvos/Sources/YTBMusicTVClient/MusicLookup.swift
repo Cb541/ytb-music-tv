@@ -73,7 +73,7 @@ enum MusicLookup {
         return MusicLyrics.parse(synced: record.syncedLyrics, plain: record.plainLyrics, instrumental: record.instrumental == true)
     }
 
-    static func lyrics(for media: MediaItem) async -> MusicLyrics {
+    static func lrclibLyrics(for media: MediaItem) async -> MusicLyrics {
         let title = cleaned(media.title), artist = cleaned(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicLyrics() }
         var fallback = MusicLyrics()
@@ -96,17 +96,31 @@ enum MusicLookup {
                 if fallback.lines.isEmpty { fallback = result }
             }
         }
-        // LyricsPlus exposes millisecond line/word timestamps. Keep line timing
-        // intact rather than displaying plain lyrics when another source has sync.
+        return fallback
+    }
+
+    static func lyrics(for media: MediaItem) async -> MusicLyrics {
+        async let base = lrclibLyrics(for: media)
+        async let rich = lyricsPlus(for: media)
+        let (lineLyrics, wordLyrics) = await (base, rich)
+        if wordLyrics.wordSynchronized { return wordLyrics }
+        if lineLyrics.synchronized || lineLyrics.instrumental { return lineLyrics }
+        return wordLyrics.lines.isEmpty ? lineLyrics : wordLyrics
+    }
+
+    static func lyricsPlus(for media: MediaItem) async -> MusicLyrics {
+        var fallback = MusicLyrics()
+        let title = cleaned(media.title), artist = cleaned(media.artist)
+        guard !title.isEmpty, !artist.isEmpty else { return fallback }
         var parameters = ["title": title, "artist": artist]
         if let album = media.album, !album.isEmpty { parameters["album"] = cleaned(album) }
         if media.durationMs > 0 { parameters["duration"] = String(Double(media.durationMs) / 1000) }
-        for host in ["https://lyricsplus.binimum.org", "https://lyricsplus.prjktla.workers.dev"] {
+        for host in ["https://lyricsplus.binimum.org", "https://lyricsplus.prjktla.workers.dev", "https://lyricsplus-seven.vercel.app"] {
             guard !Task.isCancelled else { return fallback }
             if let url = query(host + "/v2/lyrics/get", parameters), let data = try? await fetch(url) {
                 let result = parseLyricsPlus(data)
-                if result.synchronized { return result }
-                if fallback.lines.isEmpty { fallback = result }
+                if result.wordSynchronized { return result }
+                if !fallback.synchronized && result.synchronized { fallback = result }
             }
         }
         return fallback
@@ -117,15 +131,40 @@ enum MusicLookup {
         let nested = object["data"] as? [String: Any]
         let entries = object["lyrics"] as? [[String: Any]] ?? nested?["lyrics"] as? [[String: Any]] ?? object["data"] as? [[String: Any]] ?? []
         let timed = (object["type"] as? String ?? nested?["type"] as? String ?? "").uppercased() != "NONE"
-        let lines = entries.compactMap { entry -> (Double?, String)? in
-            let words = entry["syllabus"] as? [[String: Any]] ?? entry["words"] as? [[String: Any]] ?? []
-            let text = (entry["text"] as? String ?? words.filter { ($0["isBackground"] as? Bool) != true }.compactMap { $0["text"] as? String }.joined()).trimmingCharacters(in: .whitespacesAndNewlines)
+        func seconds(_ value: Any?) -> Double? {
+            let value = (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
+            return value.flatMap { $0.isFinite && $0 >= 0 ? $0 / 1000 : nil }
+        }
+        let lines = entries.compactMap { entry -> MusicLyricLine? in
+            let rawWords = entry["syllabus"] as? [[String: Any]] ?? entry["words"] as? [[String: Any]] ?? []
+            let mainWords = rawWords.filter { ($0["isBackground"] as? Bool) != true }
+            let text = (entry["text"] as? String ?? mainWords.compactMap { $0["text"] as? String }.joined()).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            let milliseconds = (entry["time"] as? NSNumber)?.doubleValue ?? (entry["time"] as? String).flatMap(Double.init)
-            let time = timed ? milliseconds.flatMap { $0.isFinite && $0 >= 0 ? $0 / 1000 : nil } : nil
-            return (time, text)
-        }.sorted { ($0.0 ?? .infinity) < ($1.0 ?? .infinity) }
-        return MusicLyrics(lines: lines.enumerated().map { MusicLyricLine(id: $0.offset, time: $0.element.0, text: $0.element.1) })
+            let time = timed ? seconds(entry["time"]) : nil
+            let rawTimed = mainWords.compactMap { word -> (String, Double, Double?)? in
+                guard timed, let text = word["text"] as? String, !text.isEmpty,
+                      let start = seconds(word["time"]) else { return nil }
+                return (text, start, seconds(word["duration"]))
+            }.sorted { $0.1 < $1.1 }
+            let lineEnd = seconds(entry["endTime"]) ?? time.flatMap { start in seconds(entry["duration"]).map { start + $0 } }
+            var words = rawTimed.enumerated().map { index, word in
+                let next = index + 1 < rawTimed.count ? rawTimed[index + 1].1 : lineEnd ?? word.1
+                return MusicLyricWord(text: word.0, start: word.1, end: max(word.1, word.2.map { word.1 + $0 } ?? next))
+            }
+            // Only use word rendering if it reproduces the provider's line text.
+            var reconstructed = words.map(\.text).joined().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            let normalizedText = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            if reconstructed != normalizedText,
+               words.map(\.text).joined(separator: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ") == normalizedText {
+                words = words.enumerated().map { index, word in
+                    MusicLyricWord(text: word.text + (index == words.count - 1 ? "" : " "), start: word.start, end: word.end)
+                }
+                reconstructed = normalizedText
+            }
+            return MusicLyricLine(id: 0, time: time ?? words.first?.start, text: text,
+                                  words: reconstructed == normalizedText ? words : [])
+        }.sorted { ($0.time ?? .infinity) < ($1.time ?? .infinity) }
+        return MusicLyrics(lines: lines.enumerated().map { MusicLyricLine(id: $0.offset, time: $0.element.time, text: $0.element.text, words: $0.element.words) })
     }
 
     static func validURL(_ value: Any?) -> URL? {

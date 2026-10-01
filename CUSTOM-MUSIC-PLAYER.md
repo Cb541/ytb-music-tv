@@ -14,7 +14,7 @@ Based on Hk-Gosuto/ytb-music-tv nightly commit 336831f. The Docker server is unc
 
 ## External services
 
-The new presentation uses HTTPS requests to artwork.m8tec.top (when album metadata exists), artwork.boidu.dev, lrclib.net, and the LyricsPlus HTTPS mirrors (binimum.org and prjktla.workers.dev). Those requests send song/artist/album metadata. Availability and accurate animated-cover/lyric matches depend on those services. Cover art remains static when there is no working animated match. Lyrics timing is line-level, not word-level. The crossfade is a fixed-duration equal-power overlap, not Orchard's tempo/beat-matched AutoMix.
+The new presentation uses HTTPS requests to artwork.m8tec.top (when album metadata exists), artwork.boidu.dev, lrclib.net, and the LyricsPlus HTTPS mirrors (binimum.org and prjktla.workers.dev). Those requests send song/artist/album metadata. Availability and accurate animated-cover/lyric matches depend on those services. Cover art remains static when there is no working animated match. Lyrics use real word/syllable timestamps when the provider supplies them; ordinary LRC remains line-level. The crossfade is a fixed-duration equal-power overlap, not Orchard's tempo/beat-matched AutoMix.
 
 The Orchard source was used as a reference for provider contracts and feature behavior. The new tvOS implementation is written in Swift and does not copy or embed Orchard's Electron audio engine, Vue components, or JavaScript modules.
 
@@ -56,3 +56,19 @@ Provider contracts: https://github.com/boidushya/artwork.boidu.dev, https://gith
 ## Queue artwork
 
 The Now Playing queue uses the existing static artwork thumbnail component: 80-point square covers with rounded corners beside each song. Missing/failed images retain a music-note placeholder. Artwork is decorative for accessibility and stays inside the existing row button so queue selection and tvOS focus behavior remain the same.
+
+## Balanced artwork warp and word lyrics
+
+Investigated the supplied Orchard 5.0.0-beta.9 source: appearancePreferences.js sets Balanced to 0.82 opacity; KawarpArtworkBackground.js uses animation speed 1.38, saturation 1.24, scale 1.32, tint [0.024, 0.04, 0.028] at 0.42 intensity, and warp intensity 0.92. immersiveVeil.js sets a 0.34 veil floor, 0.82 ceiling, and contrast targets 4.5/3. The native background now uses these intensity/scale/tint settings and a sampled adaptive veil. Core Image performs moving twirl/bump distortion on a cached blurred cover, rather than drifting palette blobs. Render resolution is 480x270 at 30fps; blur is baked once per cover. This is an independent native analogue, not the exact Kawarp shader or a pixel-identical port. Motion stops when playback pauses, the scene is inactive, or Reduce Motion is enabled.
+
+LyricsPlus line/word/syllable timestamps and durations are preserved, excluding background vocals from the main lyric. The active line highlights fragments as their real timestamps pass. Invalid/mismatched word text falls back to the intact line. LyricsPlus is searched even when LRCLIB already has line sync; available line lyrics appear immediately and upgrade when a word result arrives. The pane labels word results WORD SYNC. The playback observer runs every 50ms while Now Playing metadata updates at second boundaries. No word timings are invented for plain LRC. LyricsPlus-seven.vercel.app is an additional fallback mirror.
+
+Validation: Foundation tests cover exact word starts/ends, inferred end bounds from subsequent word/line timestamps, string timestamps, spacing, ignoring adlibs, line text mismatch and plain/line fallback. Foundation type checking and all Swift syntax parsing pass. Core Image compilation/playback needs the Actions build and Apple TV review; provider availability still governs word coverage.
+
+## Centered cover and bare progress bar
+
+Centered artwork grows to fit the available stage, reserving space for song metadata; the lyric layout keeps its existing cover size. The music layout removes the progress strip glass rectangle and places the bare strip below transport controls near the bottom, with a 22-point bottom margin. The reusable progress component keeps its original default background for other screens. Existing scrubbing hit area, remote handling, focus feedback and time labels remain available. Swift syntax and update compatibility checks pass; device layout still needs review.
+
+## Lyrics without button boxes
+
+Lyric rows use the existing label-only remote button style with the native focus effect disabled, removing tvOS backplates. A focused row brightens its text slightly; pressing still seeks to real line timing. Synchronized color/glow remains tied to playback.
