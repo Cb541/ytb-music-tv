@@ -134,32 +134,78 @@ enum MusicLookup {
         return url
     }
 
+    static func albumKey(_ value: String) -> String {
+        let base = cleaned(value)
+            .replacingOccurrences(of: #"(?i)\s*[\(\[][^\)\]]*(deluxe|expanded|remaster|anniversary|edition)[^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\s*-\s*(deluxe|expanded|remaster|anniversary).*"#, with: "", options: .regularExpression)
+        return normalized(base)
+    }
+
+    static func motionURL(_ value: Any?) -> URL? {
+        guard let url = validURL(value), ["m3u8", "mp4", "mov"].contains(url.pathExtension.lowercased()) else { return nil }
+        return url
+    }
+
+    static func artworkResult(_ data: Data, title: String, artist: String, album: String?, fallback: URL?) -> MusicArtworkResult? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        let dictionary = json as? [String: Any]
+        let objects = json as? [[String: Any]] ?? dictionary?["results"] as? [[String: Any]] ?? dictionary.map { [$0] } ?? []
+        for object in objects {
+            guard object["error"] == nil else { continue }
+            let foundArtist = object["artist"] as? String ?? object["artistName"] as? String
+            guard let foundArtist, normalized(primaryArtist(foundArtist)) == normalized(primaryArtist(artist)) else { continue }
+            let foundTitle = object["track"] as? String ?? object["trackName"] as? String ?? object["name"] as? String
+            if let foundTitle, !foundTitle.isEmpty, normalized(foundTitle) != normalized(title) { continue }
+            let foundAlbum = object["album"] as? String ?? object["collectionName"] as? String
+            if foundTitle == nil, let album, !album.isEmpty, let foundAlbum,
+               albumKey(album) != albumKey(foundAlbum) { continue }
+            let animation = object["animation"] as? [String: Any]
+            let square = animation?["square"] as? [String: Any]
+            let motion = motionURL(object["videoUrl"]) ?? motionURL(object["animated"]) ?? motionURL(object["url"])
+                ?? motionURL(animation?["best"]) ?? motionURL(square?["1080p"]) ?? motionURL(square?["768p"])
+            guard let motion else { continue }
+            let still = validURL(object["static"]) ?? validURL(object["artworkHi"]) ?? validURL(object["artwork"]) ?? fallback
+            return MusicArtworkResult(still: still, motion: motion)
+        }
+        return nil
+    }
+
+    static func discoveredAlbum(_ data: Data, title: String, artist: String, durationMs: Int) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let records = object["results"] as? [[String: Any]] else { return nil }
+        return records.first { record in
+            normalized(record["trackName"] as? String ?? "") == normalized(title) &&
+            normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)) &&
+            (durationMs <= 0 || record["trackTimeMillis"] == nil ||
+             abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000)
+        }?["collectionName"] as? String
+    }
+
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
-        let title = cleaned(media.title), artist = cleaned(media.artist)
+        let title = cleaned(media.title), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
+        var album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
+        if album == nil, let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": "us", "limit": "12"]),
+           let data = try? await fetch(url) {
+            album = discoveredAlbum(data, title: title, artist: artist, durationMs: media.durationMs)
+        }
+        guard !Task.isCancelled else { return MusicArtworkResult(still: media.artworkUrl) }
         var requests: [URL] = []
-        if let album = media.album, !album.isEmpty,
-           let url = query("https://artwork.m8tec.top/api/v1/artwork/search", ["artist": artist, "album": cleaned(album), "title": title]) {
+        var boidu = ["s": title, "a": artist]
+        if let album { boidu["al"] = album }
+        if media.durationMs > 0 { boidu["d"] = String(media.durationMs / 1000) }
+        if let album, let url = query("https://artwork.m8tec.top/api/v1/artwork/search", ["artist": artist, "album": album]) {
             requests.append(url)
         }
-        if let url = query("https://artwork.boidu.dev/", ["s": title, "a": artist]) { requests.append(url) }
+        if let url = query("https://artwork.boidu.dev/", boidu) { requests.append(url) }
+        if let url = query("https://apple-music-artwork.nopxx.site/api/search", ["term": artist + " " + title, "limit": "8", "animation": "1"]) {
+            requests.append(url)
+        }
         for url in requests {
             guard !Task.isCancelled else { break }
-            guard let data = try? await fetch(url), let json = try? JSONSerialization.jsonObject(with: data) else { continue }
-            let object = (json as? [[String: Any]])?.first ?? (json as? [String: Any])
-            guard let object, object["error"] == nil else { continue }
-            if let foundArtist = object["artist"] as? String, !foundArtist.isEmpty {
-                let left = cleaned(foundArtist).lowercased(), right = artist.lowercased()
-                guard left.contains(right) || right.contains(left) else { continue }
-            }
-            if let expectedAlbum = media.album, !expectedAlbum.isEmpty,
-               let foundAlbum = object["album"] as? String, !foundAlbum.isEmpty,
-               cleaned(expectedAlbum).localizedCaseInsensitiveCompare(cleaned(foundAlbum)) != .orderedSame { continue }
-            let still = validURL(object["static"]) ?? media.artworkUrl
-            let motion = validURL(object["videoUrl"]) ?? validURL(object["animated"]) ?? validURL(object["url"])
-            if let motion { return MusicArtworkResult(still: still, motion: motion) }
+            guard let data = try? await fetch(url) else { continue }
+            if let result = artworkResult(data, title: title, artist: artist, album: album, fallback: media.artworkUrl) { return result }
         }
         return MusicArtworkResult(still: media.artworkUrl)
     }
 }
-

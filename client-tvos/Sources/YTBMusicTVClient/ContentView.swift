@@ -2450,7 +2450,7 @@ private struct ArtworkBackdrop: View {
     }
 }
 
-private struct ArtworkThumb: View {
+struct ArtworkThumb: View {
     var url: URL?
     var size: CGFloat
     var cornerRadius: CGFloat

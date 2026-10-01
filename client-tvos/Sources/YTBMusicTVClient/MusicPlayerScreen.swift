@@ -172,7 +172,9 @@ struct MusicPlayerScreen: View {
                     showingQueue = false
                     Task { _ = await viewModel.play(media, queue: viewModel.state?.queue ?? []) }
                 } label: {
-                    HStack {
+                    HStack(spacing: 22) {
+                        ArtworkThumb(url: media.artworkUrl, size: 80, cornerRadius: 8)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading) {
                             Text(media.title).font(.title3)
                             Text(media.artist).foregroundStyle(.secondary)

@@ -46,11 +46,13 @@ final class MusicPresentationAssets: ObservableObject {
         await loadImage(media.artworkUrl, token: token)
         guard animated, !Task.isCancelled, generation == token else { return }
         let result: MusicArtworkResult
-        if let cached = artworkCache[media.id] { result = cached }
+        let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? media.title)
+        if let cached = artworkCache[cacheKey] { result = cached }
         else { result = await MusicLookup.artwork(for: media) }
         guard !Task.isCancelled, generation == token else { return }
         if artworkCache.count > 50 { artworkCache.removeAll() }
-        artworkCache[media.id] = result
+        // Do not pin a temporary provider outage as a permanent static-only answer.
+        if result.motion != nil { artworkCache[cacheKey] = result }
         motionURL = result.motion
         if result.still != media.artworkUrl { await loadImage(result.still, token: token) }
     }

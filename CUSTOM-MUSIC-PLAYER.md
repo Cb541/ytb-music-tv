@@ -44,3 +44,15 @@ On Apple TV, check video preference ON and OFF, switching songs rapidly, animate
 ## Presentation refinement
 
 The active synchronized lyric uses the same artwork accent as the transport controls, with two soft glow layers and a short highlight transition. The background samples a 48-pixel sRGB cover, balances color coverage with chroma, preserves sampled hues, and modestly lifts brightness/saturation. It retains neutral palettes for neutral artwork. Ordinary alpha blending replaces screen blending to avoid washing out colors, and the dark overlay is reduced from 27% to 18%. Swift syntax parsing passes locally; visual balance still needs device review.
+
+## Expanded motion artwork lookup
+
+Adds apple-music-artwork.nopxx.site as a third square-motion provider, alongside m8tec and boidu. Uses the public iTunes song catalog to recover missing album names with artist/title/duration checks. Album comparison tolerates Deluxe/Expanded/Remastered edition labels while preserving Live versions. Boidu requests now include known album and duration. All providers use validated HTTPS MP4/MOV/HLS motion URLs; still images and album-page URLs cannot become motion inputs. Matching preserves artist and song identity. Successful artwork is cached per artist/album, and failed lookups are not cached as permanent static-only results. These services receive artist/title/album metadata; iTunes discovery also receives duration matching locally.
+
+Live checks returned HTTP 200 from m8tec, Apple's iTunes catalog and NopXx. Swift parsing of m8tec and NopXx responses both matched square motion for Coldplay's Moon Music. Expanded model tests cover provider result shapes, rejecting wrong artists/tracks/albums, recovering an album, edition labels and non-video URL rejection. Device playback and the new full SDK build remain to be checked.
+
+Provider contracts: https://github.com/boidushya/artwork.boidu.dev, https://github.com/m8tec/apple-music-animated-artworks, https://github.com/NopXx/apple-music-artwork-search.
+
+## Queue artwork
+
+The Now Playing queue uses the existing static artwork thumbnail component: 80-point square covers with rounded corners beside each song. Missing/failed images retain a music-note placeholder. Artwork is decorative for accessibility and stays inside the existing row button so queue selection and tvOS focus behavior remain the same.
