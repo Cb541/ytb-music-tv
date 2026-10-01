@@ -91,6 +91,10 @@ enum PlaybackAndLyricsTests {
         let badWords = MusicLookup.parseLyricsPlus(Data(#"{"type":"WORD","lyrics":[{"time":1000,"text":"Actual lyric","words":[{"text":"Wrong lyric","time":1000}]}]}"#.utf8))
         precondition(badWords.synchronized && !badWords.wordSynchronized && badWords.lines[0].text == "Actual lyric")
         precondition(!untimedPlus.wordSynchronized && !timed.wordSynchronized)
+        precondition(MusicLookup.songTitle("Pink Floyd - Comfortably Numb", artist: "Pink Floyd") == "Comfortably Numb")
+        precondition(MusicLookup.songTitle("pink floyd – Comfortably Numb", artist: "Pink Floyd - Topic") == "Comfortably Numb")
+        precondition(MusicLookup.songTitle("Song - Part Two", artist: "Pink Floyd") == "Song - Part Two")
+        precondition(MusicLookup.songTitle("Pink Floyd - ", artist: "Pink Floyd") == "Pink Floyd -")
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

@@ -72,3 +72,15 @@ Centered artwork grows to fit the available stage, reserving space for song meta
 ## Lyrics without button boxes
 
 Lyric rows use the existing label-only remote button style with the native focus effect disabled, removing tvOS backplates. A focused row brightens its text slightly; pressing still seeks to real line timing. Synchronized color/glow remains tied to playback.
+
+## Header cleanup
+
+Removes the top Now Playing heading and Library button from the music screen. The existing remote Back/Exit handler still returns to the library, dismissing the queue/video first when applicable. Playback preparation is indicated on the cover rather than in a header row.
+
+## Artist header and consistent control opacity
+
+Artist appears at top left and is removed from the metadata beneath the cover. A matching Artist - prefix is stripped from the displayed title and lookup title; unrelated hyphenated titles remain intact. Lyrics uses the same 0.16 artwork-accent background opacity as Queue even when enabled. Crossfade picker uses the same bordered styling and tint opacity. The centered cover reserves less metadata space after moving the artist. Title-prefix tests, Swift syntax and cumulative update checks pass.
+
+## Idle control highlight
+
+Play/Pause now uses the same 0.16 artwork-accent background opacity as Queue, Lyrics and Crossfade. Transport buttons use a custom visual focus indicator rather than a native permanent backplate. A cancellable two-second inactivity task fades the focus outline/glow/scale while preserving the focused control. Focus movement, remote directional commands, button activation, play/pause commands, crossfade selection and scrubbing activity restore emphasis and restart the deadline. Selected shuffle/repeat state remains separate from focus emphasis. Swift syntax and cumulative patch checks pass; device focus/navigation verification remains required.

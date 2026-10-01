@@ -14,7 +14,9 @@ struct MusicPlayerScreen: View {
     @State private var showingQueue = false
     @State private var videoVisible = false
     @State private var scrubbing = false
-    @FocusState private var playFocused: Bool
+    @FocusState private var focusedControl: String?
+    @State private var controlHighlightVisible = true
+    @State private var controlActivityRevision = 0
 
     private var displayedMedia: MediaItem? { viewModel.pendingMedia ?? viewModel.state?.currentMedia }
     private var lookupID: String { (viewModel.state?.currentMediaId ?? "") + (motionArtwork ? ":motion" : ":still") }
@@ -29,20 +31,17 @@ struct MusicPlayerScreen: View {
                         .overlay(Color.black.opacity(0.55))
                 }
                 VStack(alignment: .leading, spacing: 24) {
-                    HStack {
-                        Text("NOW PLAYING").font(.system(size: 21, weight: .semibold)).tracking(4)
-                            .foregroundStyle(.white.opacity(0.65))
-                        Spacer()
-                        if viewModel.isPreparingPlayback { ProgressView().tint(.white) }
-                        Button(action: onBack) { Label("Library", systemImage: "chevron.left") }
-                            .buttonStyle(.bordered)
-                    }
+                    Text(displayedMedia?.artist ?? "")
+                        .font(.system(size: 26, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
                             VStack(spacing: 22) {
                                 artwork(side: lyricsVisible
                                     ? min(geometry.size.height * 0.47, geometry.size.width * 0.34)
-                                    : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 180)))
+                                    : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
                                 trackDetails
                             }
                             .frame(maxWidth: .infinity)
@@ -66,8 +65,17 @@ struct MusicPlayerScreen: View {
         .task(id: lookupID) {
             await assets.load(viewModel.state?.currentMedia, animated: motionArtwork && !reduceMotion)
         }
-        .onAppear { playFocused = true }
-        .onPlayPauseCommand { Task { await viewModel.togglePlayPause() } }
+        .onAppear { focusedControl = "PlayPause"; noteControlActivity() }
+        .onChange(of: focusedControl) { noteControlActivity() }
+        .onChange(of: crossfadeSeconds) { noteControlActivity() }
+        .onMoveCommand { _ in noteControlActivity() }
+        .task(id: controlActivityRevision) {
+            do { try await Task.sleep(for: .seconds(2)) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { controlHighlightVisible = false }
+        }
+        .onPlayPauseCommand { noteControlActivity(); Task { await viewModel.togglePlayPause() } }
         .onExitCommand {
             if showingQueue { showingQueue = false }
             else if videoVisible { videoVisible = false }
@@ -99,17 +107,20 @@ struct MusicPlayerScreen: View {
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: .black.opacity(0.4), radius: 35, x: 0, y: 22)
+        .overlay(alignment: .bottomTrailing) {
+            if viewModel.isPreparingPlayback {
+                ProgressView().tint(.white).padding(18)
+                    .accessibilityLabel("Preparing playback")
+            }
+        }
         .accessibilityLabel("Album artwork")
     }
 
     private var trackDetails: some View {
         VStack(alignment: lyricsVisible ? .leading : .center, spacing: 8) {
-            Text(displayedMedia?.title ?? "Choose a song")
+            Text(displayedMedia.map { MusicLookup.songTitle($0.title, artist: $0.artist) } ?? "Choose a song")
                 .font(.system(size: lyricsVisible ? 30 : 34, weight: .bold))
                 .lineLimit(2)
-            Text(displayedMedia?.artist ?? "")
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7)).lineLimit(2)
             if !lyricsVisible, let album = displayedMedia?.album, !album.isEmpty {
                 Text(album).font(.system(size: 26)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
             }
@@ -125,11 +136,14 @@ struct MusicPlayerScreen: View {
                     Task { await viewModel.toggleShuffle() }
                 }
                 control("backward.end.fill", label: "Previous") { Task { await viewModel.previous() } }
-                Button { Task { await viewModel.togglePlayPause() } } label: {
+                Button { noteControlActivity(); Task { await viewModel.togglePlayPause() } } label: {
                     Image(systemName: viewModel.state?.status == "playing" ? "pause.fill" : "play.fill")
                         .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
                 }
-                .buttonStyle(.borderedProminent).tint(assets.accentColor).foregroundStyle(.black).focused($playFocused)
+                .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
+                    highlighted: controlHighlightVisible && focusedControl == "PlayPause"))
+                .foregroundStyle(assets.accentColor)
+                .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
                 .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                 .disabled(scrubbing)
                 control("forward.end.fill", label: "Next") { Task { await viewModel.next() } }
@@ -137,7 +151,7 @@ struct MusicPlayerScreen: View {
                     Task { await viewModel.toggleRepeatOne() }
                 }
                 Spacer()
-                control("quote.bubble", label: "Lyrics", selected: lyricsVisible) { lyricsVisible.toggle() }
+                control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true) { lyricsVisible.toggle() }
                 if viewModel.currentStreamHasVideo {
                     control("video", label: "Music video", selected: videoVisible) { videoVisible.toggle() }
                 }
@@ -146,23 +160,35 @@ struct MusicPlayerScreen: View {
                     Text("Off").tag(0.0)
                     ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
                 }
-                .pickerStyle(.menu).tint(assets.accentColor).frame(width: 210)
+                .pickerStyle(.menu)
+                .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
+                    highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
+                .tint(assets.accentColor).foregroundStyle(assets.accentColor).frame(width: 210)
+                .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
                 .accessibilityLabel("Crossfade duration")
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
-                                onActivity: {}, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false)
+                                onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false)
         }
     }
 
-    private func control(_ icon: String, label: String, selected: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, action: @escaping () -> Void) -> some View {
+        Button { noteControlActivity(); action() } label: {
             Image(systemName: icon).font(.system(size: 25, weight: .semibold)).frame(width: 48, height: 44)
         }
-        .buttonStyle(.bordered).tint(assets.accentColor.opacity(selected ? 0.65 : 0.16))
+        .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
+            highlighted: controlHighlightVisible && focusedControl == label,
+            backgroundOpacity: selected && !uniformBackground ? 0.65 : 0.16))
+        .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
+    }
+
+    private func noteControlActivity() {
+        controlHighlightVisible = true
+        controlActivityRevision &+= 1
     }
 
     private var queueSheet: some View {
@@ -251,7 +277,7 @@ private struct MusicLyricsPane: View {
                     .onChange(of: activeLine) { scroll(reader) }
                     .onChange(of: followPlayback) { scroll(reader) }
                     .onChange(of: assets.lyrics) { followPlayback = true; scroll(reader) }
-                    .onAppear { scroll(reader) }
+                   .onAppear { scroll(reader) }
                     .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.1),
                                                   .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
                                          startPoint: .top, endPoint: .bottom))
@@ -293,5 +319,24 @@ private struct MusicAmbientBackground: View {
             .opacity(0.82)
         }
         .clipped()
+    }
+}
+
+// Focus remains on the button; only its visible emphasis sleeps after inactivity.
+private struct MusicControlButtonStyle: ButtonStyle {
+    let accent: Color
+    let highlighted: Bool
+    var backgroundOpacity = 0.16
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(backgroundOpacity)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(highlighted ? 0.7 : 0), lineWidth: 2))
+            .shadow(color: accent.opacity(highlighted ? 0.3 : 0), radius: 12)
+            .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? 1.04 : 1)
+            .animation(.easeOut(duration: 0.2), value: highlighted)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }

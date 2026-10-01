@@ -41,6 +41,15 @@ enum MusicLookup {
         return components.url
     }
 
+    static func songTitle(_ value: String, artist: String) -> String {
+        let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = title.range(of: #"\s+[-–—]\s+"#, options: .regularExpression) else { return title }
+        let prefix = normalized(String(title[..<separator.lowerBound]))
+        guard !prefix.isEmpty, prefix == normalized(artist) || prefix == normalized(primaryArtist(artist)) else { return title }
+        let remainder = String(title[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return remainder.isEmpty ? title : remainder
+    }
+
     static func normalized(_ value: String) -> String {
         cleaned(value).folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .replacingOccurrences(of: "&", with: " and ")
@@ -74,7 +83,7 @@ enum MusicLookup {
     }
 
     static func lrclibLyrics(for media: MediaItem) async -> MusicLyrics {
-        let title = cleaned(media.title), artist = cleaned(media.artist)
+        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = cleaned(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicLyrics() }
         var fallback = MusicLyrics()
         var exact = ["track_name": title, "artist_name": artist]
@@ -110,7 +119,7 @@ enum MusicLookup {
 
     static func lyricsPlus(for media: MediaItem) async -> MusicLyrics {
         var fallback = MusicLyrics()
-        let title = cleaned(media.title), artist = cleaned(media.artist)
+        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = cleaned(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return fallback }
         var parameters = ["title": title, "artist": artist]
         if let album = media.album, !album.isEmpty { parameters["album"] = cleaned(album) }
@@ -221,7 +230,7 @@ enum MusicLookup {
     }
 
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
-        let title = cleaned(media.title), artist = primaryArtist(media.artist)
+        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
         var album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
         if album == nil, let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": "us", "limit": "12"]),
