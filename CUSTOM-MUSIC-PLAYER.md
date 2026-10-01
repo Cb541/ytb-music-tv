@@ -202,3 +202,11 @@ Lyrics, Video, Queue and Crossfade render without control-box backgrounds, inclu
 The still-cover download and animation lookup start concurrently. Artwork providers race to return the first validated motion URL rather than waiting for earlier providers to time out. When album metadata is missing, direct song-based providers start immediately while album discovery and enriched lookups run independently. Successful results keep using the existing cache; losing requests are cancelled and artist/title/album validation is retained.
 
 The motion-only AVQueuePlayer uses a one-second preferred forward buffer and requests immediate startup once data permits, while retaining automatic recovery after network stalls. This can trade occasional rebuffering on slow connections for quicker startup; song playback settings are unchanged. Foundation tests exercise first-valid-result selection, cancellation of a slow provider and metadata mismatch rejection. The GitHub build executes these tests and checks tvOS compilation; network and Apple TV startup timing remain to be verified on-device.
+
+## Closer right icons and stronger focus glow
+
+Boxless right controls reduce their horizontal internal padding from 16 to 8 points, bringing icon centers 16 points closer without overlapping focus targets. The right group's trailing inset is compensated by eight points to keep Crossfade's center in its previous position. Their existing four-point external gaps remain. Focused right icons receive a brighter core glow (0.95 opacity, five-point radius), wider halo (0.7 opacity, 18-point radius), subtle brightness boost and 1.10 focus scale. The two-second timeout and boxless appearance remain. Left controls retain their existing padding and glow.
+
+## Centered artwork nudge upward
+
+The centered artwork moves upward eight points independently of the song title. Lyric-mode artwork, song metadata and playback controls retain their positions.

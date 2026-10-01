@@ -49,6 +49,7 @@ struct MusicPlayerScreen: View {
                                     artwork(side: lyricsVisible
                                         ? min(geometry.size.height * 0.53, geometry.size.width * 0.36, max(1, stage.size.height - 145))
                                         : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
+                                        .offset(y: lyricsVisible ? 0 : -8)
                                 }
                                 trackDetails
                             }
@@ -202,7 +203,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityLabel("Crossfade duration")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
-                .padding(.trailing, -45)
+                .padding(.trailing, -37)
                 .offset(y: 5)
             }
             .focusSection()
@@ -437,11 +438,13 @@ private struct MusicControlButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, 16)
+            .padding(.horizontal, showsBackground ? 16 : 8)
             .padding(.vertical, 12)
             .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(showsBackground ? backgroundOpacity + (highlighted ? 0.10 : 0) : 0)))
-            .shadow(color: accent.opacity(highlighted ? 0.3 : 0), radius: 12)
-            .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? 1.04 : 1)
+            .brightness(highlighted && !showsBackground ? 0.16 : 0)
+            .shadow(color: accent.opacity(highlighted ? (showsBackground ? 0.3 : 0.95) : 0), radius: showsBackground ? 12 : 5)
+            .shadow(color: accent.opacity(highlighted && !showsBackground ? 0.7 : 0), radius: 18)
+            .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? (showsBackground ? 1.04 : 1.10) : 1)
             .animation(.easeOut(duration: 0.2), value: highlighted)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
