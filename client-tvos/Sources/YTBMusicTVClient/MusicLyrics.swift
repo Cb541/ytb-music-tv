@@ -4,6 +4,13 @@ struct MusicLyricWord: Equatable {
     let text: String
     let start: Double
     let end: Double
+
+    func highlightProgress(at seconds: Double) -> Double {
+        guard seconds.isFinite, start.isFinite, end.isFinite else { return 0 }
+        let duration = min(0.30, max(0.12, end - start))
+        let fraction = min(1, max(0, (seconds - start) / duration))
+        return fraction * fraction * (3 - 2 * fraction)
+    }
 }
 
 struct MusicLyricLine: Identifiable, Equatable {

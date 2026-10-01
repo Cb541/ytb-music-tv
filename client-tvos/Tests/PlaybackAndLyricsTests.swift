@@ -101,6 +101,14 @@ enum PlaybackAndLyricsTests {
         precondition(MusicLookup.songTitle("pink floyd – Comfortably Numb", artist: "Pink Floyd - Topic") == "Comfortably Numb")
         precondition(MusicLookup.songTitle("Song - Part Two", artist: "Pink Floyd") == "Song - Part Two")
         precondition(MusicLookup.songTitle("Pink Floyd - ", artist: "Pink Floyd") == "Pink Floyd -")
+        let smoothWord = MusicLyricWord(text: "word", start: 1, end: 2)
+        precondition(smoothWord.highlightProgress(at: 0.9) == 0)
+        precondition(smoothWord.highlightProgress(at: 1) == 0)
+        precondition(abs(smoothWord.highlightProgress(at: 1.15) - 0.5) < 0.0001)
+        precondition(smoothWord.highlightProgress(at: 1.3) == 1)
+        let quickWord = MusicLyricWord(text: "a", start: 0, end: 0.05)
+        precondition(abs(quickWord.highlightProgress(at: 0.06) - 0.5) < 0.0001)
+        precondition(smoothWord.highlightProgress(at: .nan) == 0)
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

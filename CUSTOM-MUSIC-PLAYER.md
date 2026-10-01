@@ -150,3 +150,17 @@ Play/pause restores its original 70x52-point content frame (including the existi
 ## Wider player progress bar
 
 The progress strip extends 60 points farther toward each edge, reducing its outer screen inset from 90 to 30 points. Its vertical position, opacity and seek behavior are retained.
+
+## Smoother lyrics and final layout refinements
+
+Word highlights interpolate from dim white to artwork accent with a smoothstep fade beginning at each provider timestamp, capped at 0.30 seconds and with a 0.12-second minimum for short words. The existing 50ms song clock drives the fade; line scrolling eases over 0.45 seconds. Line timing and seek behavior are preserved. Tests cover the fade start, midpoint, completion, short words and nonfinite playback time.
+
+The artwork and metadata group moves down 24 points in centered and lyric modes, preserving its 34-point internal gap. Music video layout is unchanged. Each right-side control is visually scaled to 90% within its existing layout frame, retaining the group's position, layout spacing and focus target size; left-side controls keep their existing sizes.
+
+## Top-left artist inset
+
+The top-left artist label moves 30 points closer to the left edge, reducing its screen inset from 90 to 60 points.
+
+## Small left-control nudge
+
+The left playback group moves five points to the right, from a 30-point screen inset to 35 points. Button sizes and gaps are retained.

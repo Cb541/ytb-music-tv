@@ -39,6 +39,7 @@ struct MusicPlayerScreen: View {
                         .foregroundStyle(.white.opacity(0.75))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, -30)
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
                             VStack(spacing: 34) {
@@ -53,6 +54,7 @@ struct MusicPlayerScreen: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: musicVideoActive ? .infinity : nil, alignment: lyricsVisible ? .leading : .center)
                             .padding(.leading, lyricsVisible ? 40 : 0)
+                            .offset(y: musicVideoActive ? 0 : 24)
                             if lyricsVisible {
                                 MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
@@ -173,14 +175,14 @@ struct MusicPlayerScreen: View {
                         Task { await viewModel.toggleRepeatOne() }
                     }
                 }
-                .padding(.leading, -60)
+                .padding(.leading, -55)
                 Spacer()
                 HStack(spacing: 24) {
-                    control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true) { lyricsVisible.toggle() }
+                    control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true) { lyricsVisible.toggle() }
                     if viewModel.currentStreamHasVideo {
-                        control("video", label: "Music video", selected: videoVisible) { videoVisible.toggle() }
+                        control("video", label: "Music video", selected: videoVisible, compact: true) { videoVisible.toggle() }
                     }
-                    control("list.bullet", label: "Queue") { showingQueue = true }
+                    control("list.bullet", label: "Queue", compact: true) { showingQueue = true }
                     Picker("Crossfade", selection: $crossfadeSeconds) {
                         Text("Off").tag(0.0)
                         ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
@@ -190,6 +192,7 @@ struct MusicPlayerScreen: View {
                         highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
                     .fixedSize(horizontal: true, vertical: false)
+                    .scaleEffect(0.9)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
                     .accessibilityLabel("Crossfade duration")
                 }
@@ -202,13 +205,14 @@ struct MusicPlayerScreen: View {
         }
     }
 
-    private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, action: @escaping () -> Void) -> some View {
+    private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, compact: Bool = false, action: @escaping () -> Void) -> some View {
         Button { noteControlActivity(); action() } label: {
             Image(systemName: icon).font(.system(size: 25, weight: .semibold)).frame(width: 48, height: 44)
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
             backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08))
+        .scaleEffect(compact ? 0.9 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
@@ -375,8 +379,17 @@ private struct MusicLyricsPane: View {
         guard active, !line.words.isEmpty else { return Text(line.text.isEmpty ? "•••" : line.text) }
         let seconds = Double(progress.currentMs) / 1000
         return line.words.reduce(Text("")) { text, word in
-            text + Text(word.text).foregroundColor(seconds >= word.start ? assets.accentColor : .white.opacity(0.38))
+            text + Text(word.text).foregroundColor(wordColor(progress: word.highlightProgress(at: seconds)))
         }
+    }
+
+    private func wordColor(progress: Double) -> Color {
+        var red: CGFloat = 1, green: CGFloat = 1, blue: CGFloat = 1, alpha: CGFloat = 1
+        UIColor(assets.accentColor).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(red: 1 + (Double(red) - 1) * progress,
+                     green: 1 + (Double(green) - 1) * progress,
+                     blue: 1 + (Double(blue) - 1) * progress,
+                     opacity: 0.38 + (Double(alpha) - 0.38) * progress)
     }
 
     private func scroll(_ reader: ScrollViewProxy) {
@@ -384,7 +397,7 @@ private struct MusicLyricsPane: View {
         // tvOS keeps a focused row in view; move that focus with the song rather
         // than allowing an old row to pull automatic scrolling back.
         if focusedLine != nil { focusedLine = activeLine }
-        withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(activeLine, anchor: .center) }
+        withAnimation(.easeInOut(duration: 0.45)) { reader.scrollTo(activeLine, anchor: .center) }
     }
 }
 
