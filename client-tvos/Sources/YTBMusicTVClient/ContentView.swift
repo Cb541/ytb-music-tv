@@ -612,7 +612,7 @@ private struct HomeView: View {
     private var homeContentID: String {
         localizedHomeSections.map { section in
             let itemIDs = section.items.prefix(8).map(\.id).joined(separator: ",")
-            return "\(section.id):\(section.items.count):\(itemIDs)"
+            return "\(section.id):\(itemIDs)"
         }.joined(separator: "|")
     }
 
@@ -645,6 +645,14 @@ private struct MediaCarousel: View {
     var didFocusCard: () -> Void
 
     @FocusState private var focusedCardID: String?
+    @State private var page = 0
+    private let pageSize = 100
+    private var contentItems: [MediaItem] { section.items.filter { $0.type != "playlist-page" } }
+    private var pageCount: Int { max(1, (contentItems.count + pageSize - 1) / pageSize) }
+    private var displayedItems: [(offset: Int, element: MediaItem)] {
+        let start = min(page, pageCount - 1) * pageSize
+        return Array(contentItems.enumerated().dropFirst(start).prefix(pageSize))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -652,9 +660,22 @@ private struct MediaCarousel: View {
                 .font(.title2.bold())
                 .lineLimit(1)
 
+            if pageCount > 1 || section.items.contains(where: { $0.type == "playlist-page" }) {
+                HStack(spacing: 24) {
+                    if pageCount > 1 {
+                    Button("Previous songs") { page = max(0, page - 1) }.disabled(page == 0)
+                    Text("Page \(page + 1) of \(pageCount)").font(.caption)
+                    Button("Next songs") { page = min(pageCount - 1, page + 1) }.disabled(page == pageCount - 1)
+                    }
+                    if let more = section.items.first(where: { $0.type == "playlist-page" }) {
+                        Button("Load more songs") { select(more, []) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 28) {
-                    ForEach(Array(section.items.enumerated()), id: \.offset) { index, media in
+                    ForEach(displayedItems, id: \.offset) { index, media in
                         let focusID = "\(section.id)-\(index)-\(media.id)"
                         MediaCard(
                             media: media,
@@ -666,6 +687,7 @@ private struct MediaCarousel: View {
                         .focused($focusedCardID, equals: focusID)
                     }
                 }
+                .id(page)
                 .padding(.vertical, 18)
                 .padding(.horizontal, 8)
             }

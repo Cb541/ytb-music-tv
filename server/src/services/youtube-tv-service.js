@@ -76,6 +76,24 @@ export class YouTubeTvService {
     };
   }
 
+  async playlistPage(playlistId, continuation = null) {
+    const browseId = playlistBrowseId(playlistId);
+    if (continuation !== null && (typeof continuation !== 'string' || continuation.length > 20000)) {
+      throw new Error('Invalid playlist continuation');
+    }
+    const response = continuation ? await this.#browseContinuation(continuation) : await this.#browse(browseId);
+    const list = continuation ? firstContinuationCollection(response) : firstRenderer(response, 'playlistVideoListRenderer');
+    const metadata = firstRenderer(response, 'entityMetadataRenderer');
+    return {
+      id: browseId,
+      title: textOf(metadata?.title) || browseId,
+      items: contentItems(list).map((item) => normalizeTile(item?.tileRenderer, {
+        likeStatus: browseId === 'VLLL' || browseId === 'VLLM' ? 'LIKE' : 'INDIFFERENT',
+      })).filter(Boolean),
+      continuation: continuationToken(list) || null,
+    };
+  }
+
   async setRating(videoId, likeStatus) {
     const scope = this.#oauth.status().scope;
     if (scope && !String(scope).split(/\s+/).includes(YOUTUBE_WRITE_SCOPE)) {

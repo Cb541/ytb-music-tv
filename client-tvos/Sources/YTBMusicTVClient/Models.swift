@@ -56,6 +56,7 @@ extension MediaItem {
 }
 
 struct MediaSectionResponse: Codable, Equatable {
+    var continuation: String?
     var authRequired: Bool?
     var reason: String?
     var message: String?

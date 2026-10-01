@@ -109,7 +109,7 @@ export class YouTubeMusicService {
     );
   }
 
-  async browse(media) {
+  async browse(media, { paged = false, continuation = null } = {}) {
     const id = media?.playlistId ?? media?.browseId ?? media?.id;
     if (!id) {
       return emptyBrowseResult('not_browsable', 'This item cannot be opened.');
@@ -134,10 +134,13 @@ export class YouTubeMusicService {
 
     if (isPlaylistId(id)) {
       if (this.#oauthLibraryService?.authStatus().status === 'configured') {
-        const playlist = await this.#oauthLibraryService.playlist(id);
+        const playlist = paged
+          ? await this.#oauthLibraryService.playlistPage(id, continuation)
+          : await this.#oauthLibraryService.playlist(id);
         return {
           id: playlist.id,
           title: playlist.title,
+          continuation: playlist.continuation ?? null,
           sections: [{ id: 'tracks', title: 'Tracks', items: playlist.items }],
         };
       }

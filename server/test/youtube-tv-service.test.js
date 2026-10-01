@@ -84,6 +84,34 @@ test('loads playlist continuations and normalizes TV tiles', async () => {
   assert.equal(requests[1].token, 'next-page');
 });
 
+test('paged playlists return the first page without fetching later pages', async () => {
+  const requests = [];
+  const client = fakeClient((payload) => {
+    requests.push(payload);
+    if (payload.browseId) return successful({ contents: {
+      playlistVideoListRenderer: {
+        contents: [videoTile('abcdefghijk', 'First', 'Artist')],
+        continuations: [{ nextContinuationData: { continuation: 'page-two' } }],
+      },
+    }});
+    assert.equal(payload.token, 'page-two');
+    return successful({ continuationContents: { playlistVideoListContinuation: {
+      contents: [videoTile('lmnopqrstuv', 'Second', 'Artist')],
+    }}});
+  });
+  const service = new YouTubeTvService({ oauth: fakeOAuth(), clientFactory: async () => client });
+  const first = await service.playlistPage('LL');
+  assert.equal(requests.length, 1);
+  assert.equal(first.items.length, 1);
+  assert.equal(first.continuation, 'page-two');
+  const next = await service.playlistPage('LL', first.continuation);
+  assert.equal(requests.length, 2);
+  assert.equal(next.items[0].videoId, 'lmnopqrstuv');
+  assert.equal(next.continuation, null);
+  assert.equal(next.items[0].likeStatus, 'LIKE');
+  await assert.rejects(() => service.playlistPage('LL', 123), /Invalid playlist continuation/);
+});
+
 test('loads grid continuations for every Library tab', async () => {
   const requests = [];
   const client = fakeClient((payload) => {

@@ -147,7 +147,7 @@ export const createApiRouter = ({
       return json(
         res,
         200,
-        withSectionPlaybackUrls(await youtubeService.browse(body.media ?? body), baseUrl),
+        withSectionPlaybackUrls(await youtubeService.browse(body.media ?? body, { paged: body.paged === true, continuation: body.continuation ?? null }), baseUrl),
         corsHeaders(),
       );
     }

@@ -83,6 +83,7 @@ final class PlayerViewModel: ObservableObject {
     private var configUpdateTask: Task<Void, Never>?
     private var configRevision = 0
     private var connectionRevision = 0
+    private var browseRequestID = UUID()
     private var homeLoadRevision = 0
     private var searchRevision = 0
     private var homeNavigationHistory: [[MediaSection]] = []
@@ -349,34 +350,36 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func selectSearch(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
-        await select(media, queue: queue) { [weak self] sections in
+        await select(media, queue: queue) { [weak self] sections, append in
             guard let self else { return }
-            if !searchSections.isEmpty {
+            if !append && !searchSections.isEmpty {
                 searchNavigationHistory.append(searchSections)
             }
-            searchSections = sections
+            searchSections = append ? mergeBrowseSections(searchSections, sections) : sections
         }
     }
 
     func selectHome(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
-        await select(media, queue: queue) { [weak self] sections in
+        await select(media, queue: queue) { [weak self] sections, append in
             guard let self else { return }
-            if !homeSections.isEmpty {
+            if !append && !homeSections.isEmpty {
                 homeNavigationHistory.append(homeSections)
             }
-            homeSections = sections
+            homeSections = append ? mergeBrowseSections(homeSections, sections) : sections
         }
     }
 
     func selectExplore(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
-        await select(media, queue: queue) { [weak self] sections in
-            self?.exploreSections = sections
+        await select(media, queue: queue) { [weak self] sections, append in
+            guard let self else { return }
+            exploreSections = append ? mergeBrowseSections(exploreSections, sections) : sections
         }
     }
 
     func selectLibrary(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
-        await select(media, queue: queue) { [weak self] sections in
-            self?.librarySections = sections
+        await select(media, queue: queue) { [weak self] sections, append in
+            guard let self else { return }
+            librarySections = append ? mergeBrowseSections(librarySections, sections) : sections
         }
     }
 
@@ -516,6 +519,7 @@ final class PlayerViewModel: ObservableObject {
 
     @discardableResult
     func navigateBackHome() -> Bool {
+        browseRequestID = UUID()
         guard let previous = homeNavigationHistory.popLast() else { return false }
         homeSections = previous
         return true
@@ -523,6 +527,7 @@ final class PlayerViewModel: ObservableObject {
 
     @discardableResult
     func navigateBackSearch() -> Bool {
+        browseRequestID = UUID()
         guard let previous = searchNavigationHistory.popLast() else { return false }
         searchSections = previous
         return true
@@ -535,7 +540,7 @@ final class PlayerViewModel: ObservableObject {
     private func select(
         _ media: MediaItem,
         queue: [MediaItem],
-        assignSections: @escaping ([MediaSection]) -> Void
+        assignSections: @escaping ([MediaSection], Bool) -> Void
     ) async -> Bool {
         guard let client else {
             errorMessage = "Connect to the YTB Music TV server first."
@@ -545,17 +550,40 @@ final class PlayerViewModel: ObservableObject {
             return await play(media, queue: queue)
         }
 
+        let requestID = UUID()
+        browseRequestID = requestID
         do {
             let response = try await client.browse(media: media)
-            assignSections(applyingKnownRatings(to: response.sections))
+            guard browseRequestID == requestID else { return false }
+            var sections = applyingKnownRatings(to: response.sections)
+            if let cursor = response.continuation, !cursor.isEmpty, !sections.isEmpty {
+                let id = media.playlistId ?? media.browseId ?? media.id
+                let more = MediaItem(id: "playlist-next:" + id, browseId: id, playlistId: id,
+                    type: "playlist-page", title: "Load more songs", artist: "Continue playlist",
+                    durationMs: 0, likeStatus: "INDIFFERENT", tags: [cursor])
+                sections[0].items.append(more)
+            }
+            assignSections(sections, media.type == "playlist-page")
             errorMessage = response.sections.isEmpty
                 ? response.message ?? "No playable items found."
                 : nil
             return false
         } catch {
+            guard browseRequestID == requestID else { return false }
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func mergeBrowseSections(_ previous: [MediaSection], _ incoming: [MediaSection]) -> [MediaSection] {
+        var result = previous
+        for section in incoming {
+            if let index = result.firstIndex(where: { $0.id == section.id }) {
+                result[index].items.removeAll { $0.type == "playlist-page" }
+                result[index].items.append(contentsOf: section.items)
+            } else { result.append(section) }
+        }
+        return result
     }
 
     private func startPlayback(

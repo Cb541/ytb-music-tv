@@ -51,7 +51,7 @@ struct APIClient {
     }
 
     func browse(media: MediaItem) async throws -> MediaSectionResponse {
-        try await post("/api/browse", body: BrowseRequest(media: media))
+        try await post("/api/browse", body: BrowseRequest(media: media, paged: true, continuation: media.type == "playlist-page" ? media.tags.first : nil))
     }
 
     func setRating(mediaId: String, likeStatus: String) async throws -> RatingResult {
@@ -158,6 +158,8 @@ private struct APIErrorPayload: Decodable {
 
 private struct BrowseRequest: Encodable {
     var media: MediaItem
+    var paged: Bool
+    var continuation: String?
 }
 
 private struct PairingRequest: Encodable {

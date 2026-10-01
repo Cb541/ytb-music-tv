@@ -29,6 +29,12 @@ enum PlaybackAndLyricsTests {
         } catch DecodingError.dataCorrupted(let context) {
             precondition(context.codingPath.last?.stringValue == "directUrl")
         }
+        let legacyBrowse = try JSONDecoder().decode(MediaSectionResponse.self, from: Data(#"{"sections":[]}"#.utf8))
+        precondition(legacyBrowse.continuation == nil)
+        let pagedBrowse = try JSONDecoder().decode(MediaSectionResponse.self, from: Data(#"{"sections":[],"continuation":"next-page"}"#.utf8))
+        precondition(pagedBrowse.continuation == "next-page")
+        let pagedRoundTrip = try JSONDecoder().decode(MediaSectionResponse.self, from: JSONEncoder().encode(pagedBrowse))
+        precondition(pagedRoundTrip == pagedBrowse)
         let lrc = "[offset:200]\n[00:05.50]Five seconds\n[00:01.25][00:03.250]Repeated line\n[00:07.00]"
         let timed = MusicLyrics.parse(synced: lrc, plain: nil, instrumental: false)
         precondition(timed.synchronized && timed.lines.count == 4)
