@@ -54,7 +54,7 @@ struct MusicPlayerScreen: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: musicVideoActive ? .infinity : nil, alignment: lyricsVisible ? .leading : .center)
                             .padding(.leading, lyricsVisible ? 40 : 0)
-                            .offset(y: musicVideoActive ? 0 : 24)
+                            .offset(y: musicVideoActive ? 0 : (lyricsVisible ? 24 : 19))
                             if lyricsVisible {
                                 MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
@@ -197,6 +197,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityLabel("Crossfade duration")
                 }
                 .padding(.trailing, -45)
+                .offset(y: 5)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,

@@ -164,3 +164,7 @@ The top-left artist label moves 30 points closer to the left edge, reducing its 
 ## Small left-control nudge
 
 The left playback group moves five points to the right, from a 30-point screen inset to 35 points. Button sizes and gaps are retained.
+
+## Small vertical adjustments
+
+The right auxiliary control group moves down five points. In centered mode, artwork and song metadata move up five points together; the lyric-mode and video-mode artwork positions are retained.
