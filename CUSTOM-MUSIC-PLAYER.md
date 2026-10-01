@@ -96,3 +96,11 @@ In lyric mode the cover/title group aligns to the left edge of its column instea
 ## Focus highlight without outline
 
 Removes the white focus outline from player control buttons. Focus instead slightly brightens the artwork-accent fill, adds a soft accent glow and retains the small scale emphasis. The existing two-second inactivity deadline and focus-preserving behavior remain unchanged.
+
+## Cover/title spacing
+
+Increases the gap between album artwork and song metadata from 22 to 34 points, a modest 12-point adjustment in both centered and lyric layouts.
+
+## Right-side control grouping
+
+Lyrics, Music Video, Queue and Crossfade share a trailing HStack with 24-point gaps. The group shifts 45 points toward the screen edge. Crossfade uses its intrinsic width instead of a 210-point outer frame so that unused width does not create an uneven visual gap. Music Video remains conditional on video availability.

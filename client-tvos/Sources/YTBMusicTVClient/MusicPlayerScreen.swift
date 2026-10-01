@@ -38,7 +38,7 @@ struct MusicPlayerScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
-                            VStack(spacing: 22) {
+                            VStack(spacing: 34) {
                                 artwork(side: lyricsVisible
                                     ? min(geometry.size.height * 0.47, geometry.size.width * 0.34)
                                     : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
@@ -152,21 +152,25 @@ struct MusicPlayerScreen: View {
                     Task { await viewModel.toggleRepeatOne() }
                 }
                 Spacer()
-                control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true) { lyricsVisible.toggle() }
-                if viewModel.currentStreamHasVideo {
-                    control("video", label: "Music video", selected: videoVisible) { videoVisible.toggle() }
+                HStack(spacing: 24) {
+                    control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true) { lyricsVisible.toggle() }
+                    if viewModel.currentStreamHasVideo {
+                        control("video", label: "Music video", selected: videoVisible) { videoVisible.toggle() }
+                    }
+                    control("list.bullet", label: "Queue") { showingQueue = true }
+                    Picker("Crossfade", selection: $crossfadeSeconds) {
+                        Text("Off").tag(0.0)
+                        ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
+                    }
+                    .pickerStyle(.menu)
+                    .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
+                        highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
+                    .tint(assets.accentColor).foregroundStyle(assets.accentColor)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
+                    .accessibilityLabel("Crossfade duration")
                 }
-                control("list.bullet", label: "Queue") { showingQueue = true }
-                Picker("Crossfade", selection: $crossfadeSeconds) {
-                    Text("Off").tag(0.0)
-                    ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
-                }
-                .pickerStyle(.menu)
-                .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                    highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
-                .tint(assets.accentColor).foregroundStyle(assets.accentColor).frame(width: 210)
-                .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
-                .accessibilityLabel("Crossfade duration")
+                .padding(.trailing, -45)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
