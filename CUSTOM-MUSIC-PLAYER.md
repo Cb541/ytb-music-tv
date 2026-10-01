@@ -124,3 +124,7 @@ Queue uses an in-player overlay instead of a system sheet. The artwork backgroun
 ## Large playlist loading
 
 The TV requests paged playlist responses. For signed-in YouTube TV playlists, the server returns the first page without fetching every continuation. Load more songs appends the next server page; earlier clients retain the original full-playlist API. Carousels render at most 100 songs per view with Previous/Next controls, keeping page state when more songs arrive. The play queue includes all loaded songs, not unloaded pages. Both the IPA and Docker server must be updated to shorten signed-in playlist loading; the carousel limit also works with older servers. Stale browse responses are ignored after navigation. Server continuation tests and Foundation response decoding tests pass; device loading/focus/scroll performance remains to be checked.
+
+## Uncropped animated artwork
+
+The animated cover uses aspect-fit video gravity instead of aspect-fill. This preserves the entire source frame without enlarging it to crop the square cover. Nonsquare animations have neutral black letterboxing inside the existing cover frame once ready; the still cover remains visible while the animation loads. Zoom motion authored into the source animation remains part of that video.

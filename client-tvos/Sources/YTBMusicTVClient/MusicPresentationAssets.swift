@@ -190,7 +190,8 @@ struct MusicMotionArtwork: UIViewRepresentable {
             player.isMuted = true
             player.volume = 0
             playerLayer.player = player
-            playerLayer.videoGravity = .resizeAspectFill
+            playerLayer.videoGravity = .resizeAspect
+            playerLayer.backgroundColor = UIColor.black.cgColor
             isUserInteractionEnabled = false
             playerLayer.isHidden = true
             displayObserver = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] layer, _ in
