@@ -180,3 +180,7 @@ Artwork and metadata use a leading-aligned stack in lyric mode, aligning the son
 ## Remove lyric close icon
 
 Removes the X button from the lyric header. The Lyrics toggle, remote Back and remote Left exit paths are retained.
+
+## Slightly tighter left controls
+
+The left playback control gaps decrease from 30 to 28 points. The larger play/pause dimensions and leading position are retained.

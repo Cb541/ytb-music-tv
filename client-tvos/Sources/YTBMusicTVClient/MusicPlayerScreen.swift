@@ -155,7 +155,7 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                HStack(spacing: 30) {
+                HStack(spacing: 28) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
                         Task { await viewModel.toggleShuffle() }
                     }
