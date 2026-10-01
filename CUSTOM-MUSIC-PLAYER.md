@@ -184,3 +184,11 @@ Removes the X button from the lyric header. The Lyrics toggle, remote Back and r
 ## Slightly tighter left controls
 
 The left playback control gaps decrease from 30 to 28 points. The larger play/pause dimensions and leading position are retained.
+
+## Crossfade wave icon and closer left controls
+
+Crossfade uses the SF Symbols waveform icon in the same 48x44-point content frame, 25-point semibold symbol, custom artwork-tinted style and 90% visual scale as the other right controls. Its menu retains the Off and 1–12 second choices, with the current duration exposed as its accessibility value. The visible control no longer shows the selected seconds. Left control gaps decrease from 28 to 24 points; the larger play/pause button is retained.
+
+## Right-aligned tighter auxiliary controls
+
+The right-side control gaps decrease from 20 to 16 points. Trailing alignment is retained, so the group contracts toward the right edge. Icon dimensions and the waveform crossfade menu are retained.

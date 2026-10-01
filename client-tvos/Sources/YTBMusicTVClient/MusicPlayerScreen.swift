@@ -155,7 +155,7 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                HStack(spacing: 28) {
+                HStack(spacing: 24) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
                         Task { await viewModel.toggleShuffle() }
                     }
@@ -177,17 +177,22 @@ struct MusicPlayerScreen: View {
                 }
                 .padding(.leading, -55)
                 Spacer()
-                HStack(spacing: 20) {
+                HStack(spacing: 16) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true) { lyricsVisible.toggle() }
                     if viewModel.currentStreamHasVideo {
                         control("video", label: "Music video", selected: videoVisible, compact: true) { videoVisible.toggle() }
                     }
                     control("list.bullet", label: "Queue", compact: true) { showingQueue = true }
-                    Picker("Crossfade", selection: $crossfadeSeconds) {
-                        Text("Off").tag(0.0)
-                        ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
+                    Menu {
+                        Picker("Crossfade", selection: $crossfadeSeconds) {
+                            Text("Off").tag(0.0)
+                            ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
+                        }
+                    } label: {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 25, weight: .semibold))
+                            .frame(width: 48, height: 44)
                     }
-                    .pickerStyle(.menu)
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
                         highlighted: controlHighlightVisible && focusedControl == "Crossfade"))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
@@ -195,6 +200,7 @@ struct MusicPlayerScreen: View {
                     .scaleEffect(0.9)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
                     .accessibilityLabel("Crossfade duration")
+                    .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
                 .padding(.trailing, -45)
                 .offset(y: 5)
