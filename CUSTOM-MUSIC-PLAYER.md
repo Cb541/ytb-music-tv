@@ -119,7 +119,7 @@ Song loading no longer clears the background image or resets the palette to indi
 
 ## Queue dismissal continuity
 
-Queue uses an in-player overlay instead of a system sheet. The artwork background/warp view remains mounted underneath a neutral dark scrim and panel during opening and dismissal. Underlying controls are disabled/hidden from accessibility while Queue is open; initial focus moves to Done. Done, remote Back and the scrim close the panel and restore Queue focus. Queue row selection still changes songs using the same playback model. Native List content background is hidden so the panel supplies its neutral background. This removes the system presentation/dismissal path suspected in flashes without a song change. Syntax and cumulative patch checks pass; full SDK build and tvOS dismissal/focus verification remain required.
+Queue uses an in-player overlay instead of a system sheet. The artwork background/warp view remains mounted underneath a neutral dark scrim and panel during opening and dismissal. Underlying controls are disabled/hidden from accessibility while Queue is open; initial focus moves to Done. Done, remote Back and the scrim close the panel and restore Queue focus. Queue row selection still changes songs using the same playback model. Queue retains the native plain List style inside the neutral panel. This removes the system presentation/dismissal path suspected in flashes without a song change. Syntax and cumulative patch checks pass; full SDK build and tvOS dismissal/focus verification remain required.
 
 ## Large playlist loading
 
@@ -128,3 +128,7 @@ The TV requests paged playlist responses. For signed-in YouTube TV playlists, th
 ## Uncropped animated artwork
 
 The animated cover uses aspect-fit video gravity instead of aspect-fill. This preserves the entire source frame without enlarging it to crop the square cover. Nonsquare animations have neutral black letterboxing inside the existing cover frame once ready; the still cover remains visible while the animation loads. Zoom motion authored into the source animation remains part of that video.
+
+## tvOS Queue build correction
+
+Removes scrollContentBackground(.hidden), which is explicitly unavailable on tvOS. The in-player Queue overlay and continuous artwork background remain in place. Full tvOS compilation is performed by the GitHub build; local Swift syntax checks cannot validate Apple SDK availability.

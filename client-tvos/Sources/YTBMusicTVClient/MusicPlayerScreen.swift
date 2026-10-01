@@ -252,7 +252,6 @@ struct MusicPlayerScreen: View {
                 }
             }
             .listStyle(.plain)
-            .scrollContentBackground(.hidden)
         }
         .padding(60)
         .foregroundStyle(.white)
