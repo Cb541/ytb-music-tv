@@ -214,12 +214,16 @@ private struct MusicLyricsPane: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 26) {
                             ForEach(assets.lyrics.lines) { line in
+                                let isActive = assets.lyrics.synchronized && line.id == activeLine
                                 Button {
                                     if let time = line.time { seek(Int(time * 1000)); followPlayback = true }
                                 } label: {
                                     Text(line.text.isEmpty ? "•••" : line.text)
                                         .font(.system(size: 44, weight: .bold))
-                                        .foregroundStyle(.white.opacity(!assets.lyrics.synchronized || line.id == activeLine ? 1 : 0.3))
+                                        .foregroundStyle(isActive ? assets.accentColor : Color.white.opacity(assets.lyrics.synchronized ? 0.38 : 0.95))
+                                        .shadow(color: assets.accentColor.opacity(isActive ? 0.7 : 0), radius: 8)
+                                        .shadow(color: assets.accentColor.opacity(isActive ? 0.32 : 0), radius: 22)
+                                        .animation(.easeOut(duration: 0.25), value: isActive)
                                         .multilineTextAlignment(.leading)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -259,7 +263,7 @@ private struct MusicAmbientBackground: View {
             let phase = paused ? 0 : timeline.date.timeIntervalSinceReferenceDate / 5
             GeometryReader { geometry in
                 ZStack {
-                    LinearGradient(colors: colors + [.black], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
                     Canvas { context, size in
                         for index in 0..<3 {
                             let angle = phase + Double(index) * 2.1
@@ -274,8 +278,7 @@ private struct MusicAmbientBackground: View {
                                 center: center, startRadius: 0, endRadius: radius))
                         }
                     }
-                    .blendMode(.screen)
-                    Color.black.opacity(0.27)
+                    Color.black.opacity(0.18)
                 }
             }
         }

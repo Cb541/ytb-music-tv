@@ -63,12 +63,12 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     static func palette(_ image: UIImage) -> [Color] {
-        let dimension = 24
+        let dimension = 48
         var pixels = [UInt8](repeating: 0, count: dimension * dimension * 4)
         guard let cg = image.cgImage else { return [.indigo, .purple, .black] }
         let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard let context = CGContext(data: buffer.baseAddress, width: dimension, height: dimension,
-                bitsPerComponent: 8, bytesPerRow: dimension * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitsPerComponent: 8, bytesPerRow: dimension * 4, space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
             context.draw(cg, in: CGRect(x: 0, y: 0, width: CGFloat(dimension), height: CGFloat(dimension)))
             return true
@@ -78,12 +78,21 @@ final class MusicPresentationAssets: ObservableObject {
         for index in stride(from: 0, to: pixels.count, by: 4) {
             guard pixels[index + 3] > 220 else { continue }
             let r = Int(pixels[index]), g = Int(pixels[index + 1]), b = Int(pixels[index + 2])
-            guard max(r, g, b) > 28, min(r, g, b) < 235 else { continue }
             let key = (r / 32) * 64 + (g / 32) * 8 + b / 32
             let old = buckets[key] ?? (0, 0, 0, 0)
             buckets[key] = (old.r + Double(r), old.g + Double(g), old.b + Double(b), old.count + 1)
         }
-        let ranked = buckets.values.sorted { $0.count > $1.count }
+        // Weight both coverage and chroma: large black/gray areas should not
+        // bury a cover's meaningful colors, but tiny isolated pixels are noise.
+        let minimumCount = max(3, dimension * dimension / 200)
+        func score(_ bucket: (r: Double, g: Double, b: Double, count: Int)) -> Double {
+            let maximum = max(bucket.r, bucket.g, bucket.b) / Double(bucket.count)
+            let minimum = min(bucket.r, bucket.g, bucket.b) / Double(bucket.count)
+            let saturation = maximum > 0 ? (maximum - minimum) / maximum : 0
+            return sqrt(Double(bucket.count)) * (0.2 + saturation) * (0.35 + 0.65 * maximum / 255)
+        }
+        let substantial = buckets.values.filter { $0.count >= minimumCount }
+        let ranked = (substantial.isEmpty ? Array(buckets.values) : substantial).sorted { score($0) > score($1) }
         var selected: [(r: Double, g: Double, b: Double, count: Int)] = []
         for bucket in ranked {
             let unique = selected.allSatisfy { existing in
@@ -97,8 +106,16 @@ final class MusicPresentationAssets: ObservableObject {
         }
         let sorted = selected
         let result = sorted.map { bucket in
-            Color(red: bucket.r / Double(bucket.count) / 255, green: bucket.g / Double(bucket.count) / 255,
-                  blue: bucket.b / Double(bucket.count) / 255)
+            let sampled = UIColor(red: CGFloat(bucket.r / Double(bucket.count) / 255),
+                                  green: CGFloat(bucket.g / Double(bucket.count) / 255),
+                                  blue: CGFloat(bucket.b / Double(bucket.count) / 255), alpha: 1)
+            var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+            sampled.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+            // Keep the sampled hue, lift dim color, and modestly enrich chroma.
+            // Neutral artwork remains neutral instead of acquiring a fallback hue.
+            let vividSaturation = saturation < 0.08 ? saturation : min(0.88, saturation * 1.12)
+            let vividBrightness = saturation < 0.08 ? min(0.68, max(0.22, brightness)) : min(0.82, max(0.5, brightness * 1.12))
+            return Color(uiColor: UIColor(hue: hue, saturation: vividSaturation, brightness: vividBrightness, alpha: 1))
         }
         return result.isEmpty ? [.indigo, .purple, .black] : result
     }
