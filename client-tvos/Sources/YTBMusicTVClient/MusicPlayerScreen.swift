@@ -42,7 +42,7 @@ struct MusicPlayerScreen: View {
                         .padding(.leading, -30)
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
-                            VStack(spacing: 34) {
+                            VStack(alignment: lyricsVisible ? .leading : .center, spacing: 34) {
                                 if musicVideoActive {
                                     Spacer(minLength: 0)
                                 } else {
@@ -299,9 +299,6 @@ private struct MusicLyricsPane: View {
                 if !followPlayback && assets.lyrics.synchronized {
                     Button("Follow song") { resumeFollowing() }.buttonStyle(.bordered).tint(assets.accentColor)
                 }
-                Button(action: onClose) { Image(systemName: "xmark") }
-                    .buttonStyle(.bordered).tint(assets.accentColor.opacity(0.08))
-                    .accessibilityLabel("Close lyrics")
             }
             if assets.lyricsLoading {
                 ProgressView("Finding lyrics…").tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)

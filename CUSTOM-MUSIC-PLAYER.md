@@ -172,3 +172,11 @@ The right auxiliary control group moves down five points. In centered mode, artw
 ## Tighter right-control spacing
 
 The right auxiliary controls use 20-point gaps instead of 24 points. Their size, vertical offset and trailing alignment are retained.
+
+## Lyric-mode title alignment
+
+Artwork and metadata use a leading-aligned stack in lyric mode, aligning the song title with the left edge of the cover instead of centering the title underneath it. Centered mode keeps its centered alignment.
+
+## Remove lyric close icon
+
+Removes the X button from the lyric header. The Lyrics toggle, remote Back and remote Left exit paths are retained.
