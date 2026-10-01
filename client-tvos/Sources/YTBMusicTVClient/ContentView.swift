@@ -660,16 +660,11 @@ private struct MediaCarousel: View {
                 .font(.title2.bold())
                 .lineLimit(1)
 
-            if pageCount > 1 || section.items.contains(where: { $0.type == "playlist-page" }) {
+            if pageCount > 1 {
                 HStack(spacing: 24) {
-                    if pageCount > 1 {
                     Button("Previous songs") { page = max(0, page - 1) }.disabled(page == 0)
                     Text("Page \(page + 1) of \(pageCount)").font(.caption)
                     Button("Next songs") { page = min(pageCount - 1, page + 1) }.disabled(page == pageCount - 1)
-                    }
-                    if let more = section.items.first(where: { $0.type == "playlist-page" }) {
-                        Button("Load more songs") { select(more, []) }
-                    }
                 }
                 .buttonStyle(.bordered)
             }
@@ -681,7 +676,7 @@ private struct MediaCarousel: View {
                             media: media,
                             focused: focusedCardID == focusID,
                             action: {
-                                select(media, section.items.filter(\.isPlayable))
+                                select(media, section.items)
                             }
                         )
                         .focused($focusedCardID, equals: focusID)
@@ -697,8 +692,18 @@ private struct MediaCarousel: View {
                 if focusedCardID != nil {
                     didFocusCard()
                 }
+                loadMoreIfNearEnd()
             }
         }
+        .onChange(of: section.items.last?.tags.first) { loadMoreIfNearEnd() }
+    }
+
+    private func loadMoreIfNearEnd() {
+        guard let focusedCardID,
+              let index = displayedItems.first(where: { "\(section.id)-\($0.offset)-\($0.element.id)" == focusedCardID })?.offset,
+              index >= max(0, contentItems.count - 10),
+              let more = section.items.first(where: { $0.type == "playlist-page" }) else { return }
+        select(more, [])
     }
 }
 
@@ -841,8 +846,14 @@ private struct MediaSectionList: View {
 
                         LazyVStack(spacing: 10) {
                             ForEach(section.items) { media in
-                                TrackRow(media: media) {
-                                    select(media, section.items.filter(\.isPlayable))
+                                if media.type == "playlist-page" {
+                                    ProgressView("Loading more songs…")
+                                        .id(media.tags.first)
+                                        .onAppear { select(media, []) }
+                                } else {
+                                    TrackRow(media: media) {
+                                        select(media, section.items)
+                                    }
                                 }
                             }
                         }

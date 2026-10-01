@@ -83,6 +83,10 @@ final class PlayerViewModel: ObservableObject {
     private var configUpdateTask: Task<Void, Never>?
     private var configRevision = 0
     private var connectionRevision = 0
+    private var playbackQueueTask: Task<Void, Never>?
+    private var playbackQueueRevision = UUID()
+    @Published private(set) var isLoadingPlaybackQueue = false
+    private var loadingPlaylistCursors = Set<String>()
     private var browseRequestID = UUID()
     private var homeLoadRevision = 0
     private var searchRevision = 0
@@ -122,6 +126,7 @@ final class PlayerViewModel: ObservableObject {
         timeControlObserver?.invalidate()
         itemStatusObserver?.invalidate()
         nextPlaybackTask?.cancel()
+        playbackQueueTask?.cancel()
         crossfadeTask?.cancel()
         configUpdateTask?.cancel()
         artworkLoadTask?.cancel()
@@ -133,6 +138,7 @@ final class PlayerViewModel: ObservableObject {
     // MARK: - Data source
 
     func connect(to baseURL: URL, accessToken: String? = nil) async {
+        cancelPlaybackQueueLoading()
         connectionRevision &+= 1
         let revision = connectionRevision
         homeLoadRevision &+= 1
@@ -335,11 +341,58 @@ final class PlayerViewModel: ObservableObject {
 
     @discardableResult
     func play(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
-        await startPlayback(
+        let continuation = queue.first { $0.type == "playlist-page" }
+        let reusesQueue = queue.isEmpty || (continuation == nil && queue == state?.queue)
+        if !reusesQueue { cancelPlaybackQueueLoading() }
+        let started = await startPlayback(
             media,
-            replacingQueue: queue.isEmpty ? nil : queue.filter(\.isPlayable),
+            replacingQueue: reusesQueue ? nil : queue.filter(\.isPlayable),
             recordHistory: true
         )
+        if started, let continuation { loadPlaybackQueue(from: continuation) }
+        return started
+    }
+
+    private func cancelPlaybackQueueLoading() {
+        playbackQueueRevision = UUID()
+        playbackQueueTask?.cancel()
+        playbackQueueTask = nil
+        isLoadingPlaybackQueue = false
+    }
+
+    private func loadPlaybackQueue(from firstPage: MediaItem) {
+        guard let client else { return }
+        cancelPlaybackQueueLoading()
+        let revision = playbackQueueRevision
+        isLoadingPlaybackQueue = true
+        playbackQueueTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.playbackQueueRevision == revision {
+                    self.playbackQueueTask = nil
+                    self.isLoadingPlaybackQueue = false
+                }
+            }
+            var page = firstPage
+            var visited = Set<String>()
+            do {
+                while let cursor = page.tags.first, visited.insert(cursor).inserted {
+                    let response = try await client.browse(media: page)
+                    guard !Task.isCancelled, self.playbackQueueRevision == revision,
+                          var current = self.state else { return }
+                    let songs = self.applyingKnownRatings(to: response.sections.flatMap(\.items).filter(\.isPlayable))
+                    current.queue.append(contentsOf: songs)
+                    self.state = current
+                    if self.nextPlaybackCandidate == nil { self.scheduleNextPlaybackPrecache() }
+                    guard let next = response.continuation, !next.isEmpty else { break }
+                    page.tags = [next]
+                }
+            } catch {
+                if !Task.isCancelled && self.playbackQueueRevision == revision {
+                    self.errorMessage = "Could not finish loading the playback playlist: " + error.localizedDescription
+                }
+            }
+        }
     }
 
     func preparePlaybackPresentation(_ media: MediaItem) {
@@ -418,7 +471,7 @@ final class PlayerViewModel: ObservableObject {
 
     func next() async {
         cancelCrossfade()
-        guard let state else { return }
+        guard var state else { return }
 
         if state.repeatMode == "one" {
             seek(to: 0)
@@ -428,6 +481,12 @@ final class PlayerViewModel: ObservableObject {
             return
         }
 
+        let currentID = state.currentMediaId
+        while nextPlaybackItem(for: state) == nil && isLoadingPlaybackQueue {
+            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+            guard let updated = self.state, updated.currentMediaId == currentID else { return }
+            state = updated
+        }
         guard let nextItem = nextPlaybackItem(for: state) else {
             invalidateNextPlaybackCache()
             player.pause()
@@ -549,6 +608,12 @@ final class PlayerViewModel: ObservableObject {
         if media.isPlayable {
             return await play(media, queue: queue)
         }
+
+        let cursor = media.type == "playlist-page" ? media.tags.first : nil
+        if let cursor {
+            guard loadingPlaylistCursors.insert(cursor).inserted else { return false }
+        }
+        defer { if let cursor { loadingPlaylistCursors.remove(cursor) } }
 
         let requestID = UUID()
         browseRequestID = requestID

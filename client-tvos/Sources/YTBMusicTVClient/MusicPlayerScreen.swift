@@ -13,6 +13,7 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
     @State private var showingQueue = false
     @FocusState private var queueCloseFocused: Bool
+    @FocusState private var focusedQueueID: String?
     @State private var videoVisible = false
     @State private var scrubbing = false
     @FocusState private var focusedControl: String?
@@ -45,12 +46,13 @@ struct MusicPlayerScreen: View {
                                     Spacer(minLength: 0)
                                 } else {
                                     artwork(side: lyricsVisible
-                                        ? min(geometry.size.height * 0.47, geometry.size.width * 0.34)
+                                        ? min(geometry.size.height * 0.53, geometry.size.width * 0.36, max(1, stage.size.height - 145))
                                         : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
                                 }
                                 trackDetails
                             }
                             .frame(maxWidth: .infinity, maxHeight: musicVideoActive ? .infinity : nil, alignment: lyricsVisible ? .leading : .center)
+                            .padding(.leading, lyricsVisible ? 40 : 0)
                             if lyricsVisible {
                                 MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
@@ -151,24 +153,27 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
-                    Task { await viewModel.toggleShuffle() }
+                HStack(spacing: 30) {
+                    control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
+                        Task { await viewModel.toggleShuffle() }
+                    }
+                    control("backward.end.fill", label: "Previous") { Task { await viewModel.previous() } }
+                    Button { noteControlActivity(); Task { await viewModel.togglePlayPause() } } label: {
+                        Image(systemName: viewModel.state?.status == "playing" ? "pause.fill" : "play.fill")
+                            .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
+                    }
+                    .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
+                        highlighted: controlHighlightVisible && focusedControl == "PlayPause"))
+                    .foregroundStyle(assets.accentColor)
+                    .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
+                    .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
+                    .disabled(scrubbing)
+                    control("forward.end.fill", label: "Next") { Task { await viewModel.next() } }
+                    control("repeat.1", label: "Repeat song", selected: viewModel.state?.repeatMode == "one") {
+                        Task { await viewModel.toggleRepeatOne() }
+                    }
                 }
-                control("backward.end.fill", label: "Previous") { Task { await viewModel.previous() } }
-                Button { noteControlActivity(); Task { await viewModel.togglePlayPause() } } label: {
-                    Image(systemName: viewModel.state?.status == "playing" ? "pause.fill" : "play.fill")
-                        .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
-                }
-                .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                    highlighted: controlHighlightVisible && focusedControl == "PlayPause"))
-                .foregroundStyle(assets.accentColor)
-                .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
-                .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
-                .disabled(scrubbing)
-                control("forward.end.fill", label: "Next") { Task { await viewModel.next() } }
-                control("repeat.1", label: "Repeat song", selected: viewModel.state?.repeatMode == "one") {
-                    Task { await viewModel.toggleRepeatOne() }
-                }
+                .padding(.leading, -60)
                 Spacer()
                 HStack(spacing: 24) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true) { lyricsVisible.toggle() }
@@ -234,24 +239,34 @@ struct MusicPlayerScreen: View {
                 Button("Done") { closeQueue() }.buttonStyle(.bordered)
                     .focused($queueCloseFocused)
             }
-            List(viewModel.state?.queue ?? []) { media in
-                Button {
-                    closeQueue()
-                    Task { _ = await viewModel.play(media, queue: viewModel.state?.queue ?? []) }
-                } label: {
-                    HStack(spacing: 22) {
-                        ArtworkThumb(url: media.artworkUrl, size: 80, cornerRadius: 8)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading) {
-                            Text(media.title).font(.title3)
-                            Text(media.artist).foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(viewModel.state?.queue ?? []) { media in
+                        Button {
+                            closeQueue()
+                            Task { _ = await viewModel.play(media, queue: viewModel.state?.queue ?? []) }
+                        } label: {
+                            HStack(spacing: 22) {
+                                ArtworkThumb(url: media.artworkUrl, size: 80, cornerRadius: 8)
+                                    .accessibilityHidden(true)
+                                VStack(alignment: .leading) {
+                                    Text(media.title).font(.title3)
+                                    Text(media.artist).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if media.id == viewModel.state?.currentMediaId { Image(systemName: "speaker.wave.2.fill") }
+                            }
                         }
-                        Spacer()
-                        if media.id == viewModel.state?.currentMediaId { Image(systemName: "speaker.wave.2.fill") }
+                        .buttonStyle(MusicQueueButtonStyle(accent: assets.accentColor, highlighted: focusedQueueID == media.id))
+                        .focusEffectDisabled()
+                        .focused($focusedQueueID, equals: media.id)
+                    }
+                    if viewModel.isLoadingPlaybackQueue {
+                        ProgressView("Loading the rest of the playlist…").padding()
                     }
                 }
             }
-            .listStyle(.plain)
+            .scrollIndicators(.hidden)
         }
         .padding(60)
         .foregroundStyle(.white)
@@ -410,5 +425,18 @@ private struct MusicControlButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? 1.04 : 1)
             .animation(.easeOut(duration: 0.2), value: highlighted)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+private struct MusicQueueButtonStyle: ButtonStyle {
+    var accent: Color
+    var highlighted: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(highlighted ? 0.20 : 0.04)))
+            .opacity(configuration.isPressed ? 0.8 : 1)
     }
 }

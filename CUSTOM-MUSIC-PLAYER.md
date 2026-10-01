@@ -132,3 +132,17 @@ The animated cover uses aspect-fit video gravity instead of aspect-fill. This pr
 ## tvOS Queue build correction
 
 Removes scrollContentBackground(.hidden), which is explicitly unavailable on tvOS. The in-player Queue overlay and continuous artwork background remain in place. Full tvOS compilation is performed by the GitHub build; local Swift syntax checks cannot validate Apple SDK availability.
+
+## Automatic playlist continuation and left controls
+
+The left playback control group moves 45 points toward the edge, matching the existing right group's inset. Playlist carousels request another batch when focus reaches the last ten loaded songs; vertical lists request it when their loading footer appears. The manual Load more songs button is removed. Previous/Next song-page controls retain the bounded 100-card carousel for performance. Concurrent requests for the same continuation token are suppressed; returning focus to the end can retry after an error. Playback queues still contain the songs loaded when playback starts. No additional server update is required beyond v21.
+
+## Complete playback playlists and player refinements
+
+Browsing still requests pages on demand and keeps its 100-card carousel window. When starting a song from a paginated playlist, the selection includes its continuation marker; playback filters that marker out and independently fetches the remaining pages sequentially in the background, appending them to the playback queue without expanding library sections. The Queue shows loading status until complete. Next waits for a forthcoming batch when the current loaded end is reached. Starting a different queue or reconnecting cancels old hydration; a revision prevents late responses appending to a replacement queue. Queue-row selection and regular Next/Previous retain the active hydration task. Network errors are reported rather than claiming the full queue loaded.
+
+Queue uses a ScrollView/LazyVStack with custom artwork-tinted focus backgrounds instead of native List selection styling. Labels stay white with no solid white focus box. Lyric artwork grows from 47% to 53% of screen height (with stage-height bounds) and moves inward 40 points. The left group starts at a 30-point screen inset, uses five equal 48x44 content frames, and 30-point gaps. No new server update is needed beyond v21.
+
+## Restore larger play/pause button
+
+Play/pause restores its original 70x52-point content frame (including the existing button-style padding, its visible box is 102x76 points). Other left controls remain 48x44-point content frames. The 30-point gaps and left group position are retained.
