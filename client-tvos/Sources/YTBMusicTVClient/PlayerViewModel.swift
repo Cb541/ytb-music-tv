@@ -68,6 +68,7 @@ final class PlayerViewModel: ObservableObject {
 
     private var client: APIClient?
     private var timeObserver: Any?
+    private var timeObserverPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
     private var timeControlObserver: NSKeyValueObservation?
     private var itemStatusObserver: NSKeyValueObservation?
@@ -112,7 +113,7 @@ final class PlayerViewModel: ObservableObject {
 
     deinit {
         if let timeObserver {
-            player.removeTimeObserver(timeObserver)
+            timeObserverPlayer?.removeTimeObserver(timeObserver)
         }
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
@@ -783,6 +784,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func installTimeObserverIfNeeded() {
         guard timeObserver == nil else { return }
+        timeObserverPlayer = player
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.2, preferredTimescale: 600),
             queue: .main
@@ -1233,7 +1235,9 @@ final class PlayerViewModel: ObservableObject {
                   self.playbackRequestID == requestID else { incoming.pause(); return }
             guard incoming.timeControlStatus == .playing, self.state?.status == "playing" else {
                 incoming.pause()
-                incoming.seek(to: .zero)
+                await incoming.seek(to: .zero)
+                guard !Task.isCancelled, self.crossfadeGeneration == generation,
+                      self.playbackRequestID == requestID else { return }
                 self.crossfadeTask = nil
                 let oldTime = CMTimeGetSeconds(outgoing.currentTime())
                 let oldDuration = CMTimeGetSeconds(outgoing.currentItem?.duration ?? .invalid)
@@ -1269,7 +1273,8 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func promoteCrossfadePlayer(_ incoming: AVPlayer, outgoing: AVPlayer, cache: NextPlaybackCache) {
-        if let timeObserver { outgoing.removeTimeObserver(timeObserver); self.timeObserver = nil }
+        if let timeObserver { timeObserverPlayer?.removeTimeObserver(timeObserver); self.timeObserver = nil }
+        timeObserverPlayer = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
         itemStatusObserver?.invalidate()
         timeControlObserver?.invalidate()
