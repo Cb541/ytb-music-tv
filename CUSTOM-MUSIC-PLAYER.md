@@ -168,3 +168,7 @@ The left playback group moves five points to the right, from a 30-point screen i
 ## Small vertical adjustments
 
 The right auxiliary control group moves down five points. In centered mode, artwork and song metadata move up five points together; the lyric-mode and video-mode artwork positions are retained.
+
+## Tighter right-control spacing
+
+The right auxiliary controls use 20-point gaps instead of 24 points. Their size, vertical offset and trailing alignment are retained.

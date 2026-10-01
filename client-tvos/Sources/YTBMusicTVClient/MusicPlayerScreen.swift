@@ -177,7 +177,7 @@ struct MusicPlayerScreen: View {
                 }
                 .padding(.leading, -55)
                 Spacer()
-                HStack(spacing: 24) {
+                HStack(spacing: 20) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true) { lyricsVisible.toggle() }
                     if viewModel.currentStreamHasVideo {
                         control("video", label: "Music video", selected: videoVisible, compact: true) { videoVisible.toggle() }
