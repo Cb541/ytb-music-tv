@@ -146,3 +146,7 @@ Queue uses a ScrollView/LazyVStack with custom artwork-tinted focus backgrounds 
 ## Restore larger play/pause button
 
 Play/pause restores its original 70x52-point content frame (including the existing button-style padding, its visible box is 102x76 points). Other left controls remain 48x44-point content frames. The 30-point gaps and left group position are retained.
+
+## Wider player progress bar
+
+The progress strip extends 60 points farther toward each edge, reducing its outer screen inset from 90 to 30 points. Its vertical position, opacity and seek behavior are retained.

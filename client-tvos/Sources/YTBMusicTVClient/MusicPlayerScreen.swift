@@ -198,6 +198,7 @@ struct MusicPlayerScreen: View {
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
                                 onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false)
+                .padding(.horizontal, -60)
         }
     }
 
