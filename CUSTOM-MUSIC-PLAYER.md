@@ -84,3 +84,15 @@ Artist appears at top left and is removed from the metadata beneath the cover. A
 ## Idle control highlight
 
 Play/Pause now uses the same 0.16 artwork-accent background opacity as Queue, Lyrics and Crossfade. Transport buttons use a custom visual focus indicator rather than a native permanent backplate. A cancellable two-second inactivity task fades the focus outline/glow/scale while preserving the focused control. Focus movement, remote directional commands, button activation, play/pause commands, crossfade selection and scrubbing activity restore emphasis and restart the deadline. Selected shuffle/repeat state remains separate from focus emphasis. Swift syntax and cumulative patch checks pass; device focus/navigation verification remains required.
+
+## More transparent controls
+
+All ordinary player control boxes now use 0.08 artwork-accent opacity instead of 0.16. Enabled shuffle/repeat backgrounds are reduced from 0.65 to 0.20, retaining state indication without a heavy fill. Icon color and idle focus behavior remain the same.
+
+## Lyric navigation and quieter progress track
+
+In lyric mode the cover/title group aligns to the left edge of its column instead of the center, shifting it farther left. Back closes lyrics before leaving the player; Left from lyric rows also closes them, and the lyric header has a Close button. Closing returns focus to Lyrics. Manual browsing pauses follow only temporarily: after three seconds without another row move, the pane returns to the active line. Selecting a timed line or Follow song resumes immediately. While following, row focus advances with the active line so tvOS cannot keep an obsolete row pinned in view. Bare music progress uses 0.12 unplayed opacity (0.18 focused, 0.26 scrubbing), while other progress screens keep their old defaults. Syntax and cumulative update checks pass; device focus/scroll verification remains required.
+
+## Focus highlight without outline
+
+Removes the white focus outline from player control buttons. Focus instead slightly brightens the artwork-accent fill, adds a soft accent glow and retains the small scale emphasis. The existing two-second inactivity deadline and focus-preserving behavior remain unchanged.

@@ -1824,6 +1824,7 @@ private struct ProgressStrip: View {
     }
 
     private var trackOpacity: Double {
+        if !showsBackground { return scrubbing ? 0.26 : focused ? 0.18 : 0.12 }
         if scrubbing { return 0.42 }
         return focused ? 0.34 : 0.2
     }

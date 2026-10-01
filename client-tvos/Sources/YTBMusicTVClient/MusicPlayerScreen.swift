@@ -44,9 +44,9 @@ struct MusicPlayerScreen: View {
                                     : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
                                 trackDetails
                             }
-                            .frame(maxWidth: .infinity)
+                            .frame(maxWidth: .infinity, alignment: lyricsVisible ? .leading : .center)
                             if lyricsVisible {
-                                MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek)
+                                MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
                                     .transition(.opacity.combined(with: .move(edge: .trailing)))
                             }
@@ -79,6 +79,7 @@ struct MusicPlayerScreen: View {
         .onExitCommand {
             if showingQueue { showingQueue = false }
             else if videoVisible { videoVisible = false }
+            else if lyricsVisible { closeLyrics() }
             else { onBack() }
         }
         .onChange(of: viewModel.state?.currentMediaId) { videoVisible = false }
@@ -179,11 +180,17 @@ struct MusicPlayerScreen: View {
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
-            backgroundOpacity: selected && !uniformBackground ? 0.65 : 0.16))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08))
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
+    }
+
+    private func closeLyrics() {
+        lyricsVisible = false
+        focusedControl = "Lyrics"
+        noteControlActivity()
     }
 
     private func noteControlActivity() {
@@ -224,6 +231,8 @@ private struct MusicLyricsPane: View {
     @ObservedObject var assets: MusicPresentationAssets
     @ObservedObject var progress: PlaybackProgress
     let seek: (Int) -> Void
+    let onClose: () -> Void
+    @State private var browseRevision = 0
     @State private var followPlayback = true
     @FocusState private var focusedLine: Int?
     private var activeLine: Int? { assets.lyrics.activeLine(at: Double(progress.currentMs) / 1000) }
@@ -235,8 +244,11 @@ private struct MusicLyricsPane: View {
                     .font(.system(size: 17, weight: .semibold)).tracking(3).foregroundStyle(.white.opacity(0.5))
                 Spacer()
                 if !followPlayback && assets.lyrics.synchronized {
-                    Button("Follow song") { followPlayback = true }.buttonStyle(.bordered).tint(assets.accentColor)
+                    Button("Follow song") { resumeFollowing() }.buttonStyle(.bordered).tint(assets.accentColor)
                 }
+                Button(action: onClose) { Image(systemName: "xmark") }
+                    .buttonStyle(.bordered).tint(assets.accentColor.opacity(0.08))
+                    .accessibilityLabel("Close lyrics")
             }
             if assets.lyricsLoading {
                 ProgressView("Finding lyrics…").tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -250,7 +262,7 @@ private struct MusicLyricsPane: View {
                             ForEach(assets.lyrics.lines) { line in
                                 let isActive = assets.lyrics.synchronized && line.id == activeLine
                                 Button {
-                                    if let time = line.time { seek(Int(time * 1000)); followPlayback = true }
+                                    if let time = line.time { seek(Int(time * 1000)); resumeFollowing() }
                                 } label: {
                                     lyricText(line, active: isActive)
                                         .font(.system(size: 44, weight: .bold))
@@ -272,18 +284,40 @@ private struct MusicLyricsPane: View {
                     }
                     .scrollIndicators(.hidden)
                     .onMoveCommand { direction in
-                        if direction == .up || direction == .down { followPlayback = false }
+                        if direction == .left { onClose() }
+                        else if direction == .up || direction == .down { browseLyrics() }
+                    }
+                    .onChange(of: focusedLine) {
+                        if let focusedLine, focusedLine != activeLine { browseLyrics() }
+                    }
+                    .task(id: browseRevision) {
+                        guard !followPlayback else { return }
+                        do { try await Task.sleep(for: .seconds(3)) }
+                        catch { return }
+                        guard !Task.isCancelled else { return }
+                        resumeFollowing()
+                        scroll(reader)
                     }
                     .onChange(of: activeLine) { scroll(reader) }
                     .onChange(of: followPlayback) { scroll(reader) }
                     .onChange(of: assets.lyrics) { followPlayback = true; scroll(reader) }
-                   .onAppear { scroll(reader) }
+                    .onAppear { scroll(reader) }
                     .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.1),
                                                   .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
                                          startPoint: .top, endPoint: .bottom))
                 }
             }
         }
+    }
+
+    private func browseLyrics() {
+        followPlayback = false
+        browseRevision &+= 1
+    }
+
+    private func resumeFollowing() {
+        followPlayback = true
+        browseRevision &+= 1
     }
 
     private func lyricText(_ line: MusicLyricLine, active: Bool) -> Text {
@@ -296,6 +330,9 @@ private struct MusicLyricsPane: View {
 
     private func scroll(_ reader: ScrollViewProxy) {
         guard followPlayback, let activeLine else { return }
+        // tvOS keeps a focused row in view; move that focus with the song rather
+        // than allowing an old row to pull automatic scrolling back.
+        if focusedLine != nil { focusedLine = activeLine }
         withAnimation(.easeInOut(duration: 0.3)) { reader.scrollTo(activeLine, anchor: .center) }
     }
 }
@@ -326,14 +363,13 @@ private struct MusicAmbientBackground: View {
 private struct MusicControlButtonStyle: ButtonStyle {
     let accent: Color
     let highlighted: Bool
-    var backgroundOpacity = 0.16
+    var backgroundOpacity = 0.08
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(backgroundOpacity)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(highlighted ? 0.7 : 0), lineWidth: 2))
+            .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(backgroundOpacity + (highlighted ? 0.10 : 0))))
             .shadow(color: accent.opacity(highlighted ? 0.3 : 0), radius: 12)
             .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? 1.04 : 1)
             .animation(.easeOut(duration: 0.2), value: highlighted)
