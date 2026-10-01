@@ -12,6 +12,7 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
     @State private var showingQueue = false
+    @FocusState private var queueCloseFocused: Bool
     @State private var videoVisible = false
     @State private var scrubbing = false
     @FocusState private var focusedControl: String?
@@ -63,7 +64,20 @@ struct MusicPlayerScreen: View {
                 .padding(.horizontal, 90)
                 .padding(.top, 45)
                 .padding(.bottom, 22)
+                .disabled(showingQueue)
+                .accessibilityHidden(showingQueue)
+                if showingQueue {
+                    Color.black.opacity(0.45).ignoresSafeArea()
+                        .onTapGesture { closeQueue() }
+                    queueSheet
+                        .frame(width: min(geometry.size.width * 0.78, 1500), height: geometry.size.height * 0.84)
+                        .background(RoundedRectangle(cornerRadius: 24).fill(Color(red: 0.025, green: 0.035, blue: 0.028).opacity(0.97)))
+                        .shadow(color: .black.opacity(0.4), radius: 30)
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingQueue)
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .ignoresSafeArea()
@@ -82,14 +96,13 @@ struct MusicPlayerScreen: View {
         }
         .onPlayPauseCommand { noteControlActivity(); Task { await viewModel.togglePlayPause() } }
         .onExitCommand {
-            if showingQueue { showingQueue = false }
+            if showingQueue { closeQueue() }
             else if videoVisible { videoVisible = false }
             else if lyricsVisible { closeLyrics() }
             else { onBack() }
         }
         .onChange(of: viewModel.state?.currentMediaId) { videoVisible = false }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: lyricsVisible)
-        .sheet(isPresented: $showingQueue) { queueSheet }
     }
 
     private var ambientBackground: some View {
@@ -207,16 +220,23 @@ struct MusicPlayerScreen: View {
         controlActivityRevision &+= 1
     }
 
+    private func closeQueue() {
+        showingQueue = false
+        focusedControl = "Queue"
+        noteControlActivity()
+    }
+
     private var queueSheet: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack {
                 Text("Playing next").font(.largeTitle.bold())
                 Spacer()
-                Button("Done") { showingQueue = false }.buttonStyle(.bordered)
+                Button("Done") { closeQueue() }.buttonStyle(.bordered)
+                    .focused($queueCloseFocused)
             }
             List(viewModel.state?.queue ?? []) { media in
                 Button {
-                    showingQueue = false
+                    closeQueue()
                     Task { _ = await viewModel.play(media, queue: viewModel.state?.queue ?? []) }
                 } label: {
                     HStack(spacing: 22) {
@@ -231,8 +251,12 @@ struct MusicPlayerScreen: View {
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
         .padding(60)
+        .foregroundStyle(.white)
+        .onAppear { queueCloseFocused = true }
     }
 }
 

@@ -116,3 +116,7 @@ Synchronized lyric rows before the current line receive a soft 3-point blur with
 ## Track-change background continuity
 
 Song loading no longer clears the background image or resets the palette to indigo/purple. Album-cover loading still resets the foreground cover and motion player for correct track identity, while a separate background image remains until the next cover arrives. Initial/no-track fallback is neutral dark. The native warp renderer blends cached blurred covers over 1.2 seconds, preserving motion phase; rapid replacement freezes the current blend before starting a new one. The adaptive veil also animates over 1.2 seconds. Paused/static mode shows new artwork immediately. Syntax and cumulative update checks pass; Core Image SDK build and device transition verification remain required.
+
+## Queue dismissal continuity
+
+Queue uses an in-player overlay instead of a system sheet. The artwork background/warp view remains mounted underneath a neutral dark scrim and panel during opening and dismissal. Underlying controls are disabled/hidden from accessibility while Queue is open; initial focus moves to Done. Done, remote Back and the scrim close the panel and restore Queue focus. Queue row selection still changes songs using the same playback model. Native List content background is hidden so the panel supplies its neutral background. This removes the system presentation/dismissal path suspected in flashes without a song change. Syntax and cumulative patch checks pass; full SDK build and tvOS dismissal/focus verification remain required.
