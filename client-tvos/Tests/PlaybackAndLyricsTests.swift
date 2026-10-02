@@ -127,6 +127,11 @@ enum PlaybackAndLyricsTests {
         precondition(cancelledSlowProvider)
         let noArtwork = await MusicLookup.firstArtwork(from: [fastProvider], title: "Song", artist: "Other Artist", album: "Album", fallback: nil) { _ in m8tec }
         precondition(noArtwork == nil)
+        let searchable = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"match","title":"Café Song","artist":"Artist","album":"Album"}"#.utf8))
+        precondition(searchable.matchesSearch("CAFE") && searchable.matchesSearch("artist") && searchable.matchesSearch("album"))
+        precondition(searchable.matchesSearch(" ") && !searchable.matchesSearch("missing"))
+        let found = try JSONDecoder().decode(MediaSectionResponse.self, from: Data(#"{"sections":[],"playbackQueue":[{"id":"match","title":"Song"}],"title":"Artist"}"#.utf8))
+        precondition(found.playbackQueue?.first?.id == "match" && found.title == "Artist")
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

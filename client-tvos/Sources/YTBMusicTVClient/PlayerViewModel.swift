@@ -90,6 +90,11 @@ final class PlayerViewModel: ObservableObject {
     private var browseRequestID = UUID()
     private var homeLoadRevision = 0
     private var searchRevision = 0
+    @Published private(set) var homePlaylist: MediaItem?
+    @Published private(set) var searchPlaylist: MediaItem?
+    @Published private(set) var searchPageTitle: String?
+    private var homePlaylistHistory: [MediaItem?] = []
+    private var searchPlaylistHistory: [MediaItem?] = []
     private var homeNavigationHistory: [[MediaSection]] = []
     private var searchNavigationHistory: [[MediaSection]] = []
     private var knownRatings: [String: String] = [:]
@@ -245,13 +250,14 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
-    func search(_ query: String) async {
+    func search(_ query: String, type: String = "all") async {
+        browseRequestID = UUID()
         searchRevision &+= 1
         let revision = searchRevision
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !trimmedQuery.isEmpty else {
             searchSections = []
-            searchNavigationHistory.removeAll()
+            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             isSearching = false
             return
         }
@@ -263,15 +269,39 @@ final class PlayerViewModel: ObservableObject {
             }
         }
         do {
-            let sections = try await client.search(query: trimmedQuery).sections
+            let sections = try await client.search(query: trimmedQuery, type: type).sections
             guard revision == searchRevision else { return }
             searchSections = applyingKnownRatings(to: sections)
-            searchNavigationHistory.removeAll()
+            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             errorMessage = nil
         } catch {
             guard revision == searchRevision else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    func searchPlaylist(_ media: MediaItem, query: String) async -> MediaSectionResponse? {
+        guard let client else { return nil }
+        do { return try await client.playlistSearch(media: media, query: query) }
+        catch { if !Task.isCancelled { errorMessage = error.localizedDescription }; return nil }
+    }
+
+    func openRelated(_ media: MediaItem, kind: String) async -> Bool {
+        browseRequestID = UUID()
+        guard let client else { return false }
+        searchRevision &+= 1
+        let revision = searchRevision
+        isSearching = true
+        defer { if revision == searchRevision { isSearching = false } }
+        do {
+            let response = try await client.browseRelated(media: media, kind: kind)
+            guard revision == searchRevision else { return false }
+            if !searchSections.isEmpty { searchNavigationHistory.append(searchSections); searchPlaylistHistory.append(searchPlaylist) }
+            searchPlaylist = nil
+            searchPageTitle = response.title
+            searchSections = applyingKnownRatings(to: response.sections)
+            return true
+        } catch { if revision == searchRevision { errorMessage = error.localizedDescription }; return false }
     }
 
     func loadExplore() async {
@@ -316,7 +346,7 @@ final class PlayerViewModel: ObservableObject {
                 home: ratedHome,
                 explore: ratedExplore
             )
-            homeNavigationHistory.removeAll()
+            homeNavigationHistory.removeAll(); homePlaylistHistory.removeAll(); homePlaylist = nil
 
             errorMessage = nil
         } catch {
@@ -407,7 +437,9 @@ final class PlayerViewModel: ObservableObject {
             guard let self else { return }
             if !append && !searchSections.isEmpty {
                 searchNavigationHistory.append(searchSections)
+                searchPlaylistHistory.append(searchPlaylist)
             }
+            if !append { searchPlaylist = (media.type == "playlist" || media.playlistId != nil) ? media : nil; searchPageTitle = media.title }
             searchSections = append ? mergeBrowseSections(searchSections, sections) : sections
         }
     }
@@ -417,7 +449,9 @@ final class PlayerViewModel: ObservableObject {
             guard let self else { return }
             if !append && !homeSections.isEmpty {
                 homeNavigationHistory.append(homeSections)
+                homePlaylistHistory.append(homePlaylist)
             }
+            if !append { homePlaylist = (media.type == "playlist" || media.playlistId != nil) ? media : nil }
             homeSections = append ? mergeBrowseSections(homeSections, sections) : sections
         }
     }
@@ -581,6 +615,7 @@ final class PlayerViewModel: ObservableObject {
         browseRequestID = UUID()
         guard let previous = homeNavigationHistory.popLast() else { return false }
         homeSections = previous
+        homePlaylist = homePlaylistHistory.popLast() ?? nil
         return true
     }
 
@@ -589,6 +624,8 @@ final class PlayerViewModel: ObservableObject {
         browseRequestID = UUID()
         guard let previous = searchNavigationHistory.popLast() else { return false }
         searchSections = previous
+        searchPlaylist = searchPlaylistHistory.popLast() ?? nil
+        searchPageTitle = nil
         return true
     }
 

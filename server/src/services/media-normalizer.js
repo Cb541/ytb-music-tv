@@ -4,7 +4,8 @@ export const normalizeMediaNode = (node, fallback = {}) => {
   }
 
   const itemType = node.item_type ?? fallback.itemType ?? 'unknown';
-  const videoId = node.id && isLikelyVideoId(node.id) ? node.id : undefined;
+  const browsable = ['playlist', 'album', 'artist'].includes(itemType);
+  const videoId = !browsable && node.id && isLikelyVideoId(node.id) ? node.id : undefined;
   const title = textOf(node.title) || node.name || fallback.title || 'Untitled';
   const artists = node.artists ?? (node.author ? [node.author] : node.authors ?? []);
   const artist = artists.map((entry) => entry?.name).filter(Boolean).join(', ');
@@ -13,7 +14,7 @@ export const normalizeMediaNode = (node, fallback = {}) => {
   const artworkUrl = bestThumbnailUrl(node.thumbnails ?? node.thumbnail);
   const endpointBrowse = endpointBrowseId(node.endpoint);
   const endpointPlaylist = endpointPlaylistId(node.endpoint);
-  const nodeBrowseId = node.id && !isLikelyVideoId(node.id) ? node.id : null;
+  const nodeBrowseId = node.id && (browsable || !isLikelyVideoId(node.id)) ? node.id : null;
 
   const id =
     videoId ??
@@ -30,6 +31,8 @@ export const normalizeMediaNode = (node, fallback = {}) => {
     title: String(title),
     artist: artist || fallback.artist || '',
     album,
+    artistBrowseId: artists.find((entry) => entry?.channel_id || entry?.id)?.channel_id ?? artists.find((entry) => entry?.id)?.id ?? null,
+    albumBrowseId: node.album?.id ?? endpointBrowseId(node.album?.endpoint),
     durationMs,
     artworkUrl,
     streamUrl: null,

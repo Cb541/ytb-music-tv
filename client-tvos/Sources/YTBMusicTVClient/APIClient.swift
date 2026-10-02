@@ -42,6 +42,14 @@ struct APIClient {
         try await get("/api/explore")
     }
 
+    func playlistSearch(media: MediaItem, query: String) async throws -> MediaSectionResponse {
+        try await post("/api/playlist/search", body: PlaylistSearchRequest(media: media, query: query), timeout: 300)
+    }
+
+    func browseRelated(media: MediaItem, kind: String) async throws -> MediaSectionResponse {
+        try await post("/api/browse/related", body: RelatedBrowseRequest(media: media, kind: kind))
+    }
+
     func home() async throws -> MediaSectionResponse {
         try await get("/api/home")
     }
@@ -80,8 +88,9 @@ struct APIClient {
         }
     }
 
-    private func post<T: Decodable, Body: Encodable>(_ path: String, body: Body) async throws -> T {
+    private func post<T: Decodable, Body: Encodable>(_ path: String, body: Body, timeout: TimeInterval = 60) async throws -> T {
         var request = request(path)
+        request.timeoutInterval = timeout
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONEncoder.ytbMusicTV.encode(body)
@@ -217,3 +226,6 @@ private extension DecodingError {
         return (field.isEmpty ? "JSON" : field) + ": " + context.debugDescription
     }
 }
+
+private struct PlaylistSearchRequest: Encodable { var media: MediaItem; var query: String }
+private struct RelatedBrowseRequest: Encodable { var media: MediaItem; var kind: String }

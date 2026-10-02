@@ -112,7 +112,7 @@ struct ContentView: View {
                 if showingPlayer {
                     Group {
                         if musicLayout {
-                            MusicPlayerScreen(viewModel: viewModel, l10n: l10n, onBack: returnFromPlayer)
+                            MusicPlayerScreen(viewModel: viewModel, l10n: l10n, onBack: returnFromPlayer, onBrowse: { selectedTab = .search; returnFromPlayer() })
                         } else {
                             PlayerScreen(viewModel: viewModel, l10n: l10n, onBack: returnFromPlayer)
                         }
@@ -552,6 +552,7 @@ private struct HomeView: View {
     var select: (MediaItem, [MediaItem]) -> Void
     var returnToMenu: () -> Void
 
+    @State private var showingPlaylistSearch = false
     @State private var focusedSectionID: String?
 
     private static let headerScrollID = "home-header"
@@ -560,7 +561,10 @@ private struct HomeView: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 42) {
-                    ScreenHeader(title: l10n.text("home.title"), subtitle: l10n.text("home.subtitle"))
+                    if viewModel.homePlaylist != nil {
+                        Button("Search this playlist", systemImage: "magnifyingglass") { showingPlaylistSearch = true }.buttonStyle(.bordered)
+                    }
+                    ScreenHeader(title: viewModel.homePlaylist?.title ?? l10n.text("home.title"), subtitle: l10n.text("home.subtitle"))
                         .id(Self.headerScrollID)
 
                     if viewModel.isLoadingHome && localizedHomeSections.isEmpty {
@@ -586,6 +590,11 @@ private struct HomeView: View {
             }
             .onChange(of: homeContentID) {
                 restoreHomePosition(proxy: proxy)
+            }
+        }
+        .sheet(isPresented: $showingPlaylistSearch) {
+            if let playlist = viewModel.homePlaylist {
+                PlaylistSearchPane(viewModel: viewModel, playlist: playlist, l10n: l10n, select: select)
             }
         }
         .task {
@@ -764,10 +773,11 @@ private struct SearchView: View {
     var returnToMenu: () -> Void
 
     @State private var query = ""
+    @State private var searchType = "all"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            ScreenHeader(title: l10n.text("nav.search"), subtitle: l10n.text("search.placeholder"))
+            ScreenHeader(title: viewModel.searchPageTitle ?? l10n.text("nav.search"), subtitle: l10n.text("search.placeholder"))
 
             HStack(spacing: 14) {
                 HStack(spacing: 12) {
@@ -796,7 +806,17 @@ private struct SearchView: View {
             .frame(maxWidth: 820)
             .focusSection()
 
-            MediaSectionList(sections: viewModel.searchSections, l10n: l10n, select: select)
+            Picker("Search category", selection: $searchType) {
+                Text("All").tag("all")
+                Text("Songs").tag("song")
+                Text("Artists").tag("artist")
+                Text("Albums").tag("album")
+                Text("Playlists").tag("playlist")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: searchType) { runSearch() }
+            if searchType == "playlist" { Text("Public and community playlists").font(.caption).foregroundStyle(.secondary) }
+            MediaSectionList(sections: viewModel.searchSections, l10n: l10n, select: select, playlist: viewModel.searchPlaylist, viewModel: viewModel)
         }
         .onExitCommand {
             if !viewModel.navigateBackSearch() {
@@ -806,7 +826,7 @@ private struct SearchView: View {
     }
 
     private func runSearch() {
-        Task { await viewModel.search(query) }
+        Task { await viewModel.search(query, type: searchType) }
     }
 }
 
@@ -832,10 +852,16 @@ private struct MediaSectionList: View {
     var l10n: L10n
     var select: (MediaItem, [MediaItem]) -> Void
     var showsSectionTitle = true
+    var playlist: MediaItem? = nil
+    var viewModel: PlayerViewModel? = nil
+    @State private var showingPlaylistSearch = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 34) {
+                if playlist != nil && viewModel != nil {
+                    Button("Search this playlist", systemImage: "magnifyingglass") { showingPlaylistSearch = true }.buttonStyle(.bordered)
+                }
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 12) {
                         if showsSectionTitle {
@@ -864,6 +890,9 @@ private struct MediaSectionList: View {
             .padding(.trailing, 18)
         }
         .scrollIndicators(.hidden)
+        .sheet(isPresented: $showingPlaylistSearch) {
+            if let playlist, let viewModel { PlaylistSearchPane(viewModel: viewModel, playlist: playlist, l10n: l10n, select: select) }
+        }
     }
 }
 
@@ -2675,4 +2704,40 @@ private func formatDuration(_ ms: Int) -> String {
     let minutes = totalSeconds / 60
     let seconds = totalSeconds % 60
     return "\(minutes):\(String(format: "%02d", seconds))"
+}
+
+private struct PlaylistSearchPane: View {
+    @ObservedObject var viewModel: PlayerViewModel
+    var playlist: MediaItem
+    var l10n: L10n
+    var select: (MediaItem, [MediaItem]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var result: MediaSectionResponse?
+    @State private var loading = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack { Text("Search " + playlist.title).font(.title); Spacer(); Button("Done") { dismiss() } }
+            TextField("Song, artist or album", text: $query).onSubmit { query = query.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if loading { ProgressView("Searching the entire playlist…") }
+            if let result {
+                if result.sections.flatMap(\.items).isEmpty { Text("No matching songs") }
+                MediaSectionList(sections: result.sections, l10n: l10n, select: { media, queue in
+                    dismiss(); select(media, result.playbackQueue ?? queue)
+                })
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(60)
+        .task(id: query) {
+            result = nil
+            guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { loading = false; return }
+            loading = true
+            do { try await Task.sleep(nanoseconds: 500_000_000) } catch { return }
+            let response = await viewModel.searchPlaylist(playlist, query: query)
+            guard !Task.isCancelled else { return }
+            result = response; loading = false
+        }
+        .onExitCommand { dismiss() }
+    }
 }

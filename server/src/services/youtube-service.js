@@ -25,6 +25,7 @@ export class YouTubeMusicService {
   #playbackClientPromise;
   #streamCache = new Map();
   #streamInflight = new Map();
+  #playlistSearchCache = new Map();
 
   constructor({ configStore, sessionStore, oauthLibraryService = null, fetchFunction = globalThis.fetch }) {
     this.#configStore = configStore;
@@ -53,6 +54,42 @@ export class YouTubeMusicService {
     const client = await this.#client();
     const result = await client.music.search(query, filters);
     return normalizeSearch(result);
+  }
+
+  async playlistSearch(media, query) {
+    const id = media?.playlistId ?? media?.browseId ?? media?.id;
+    if (!id || !String(query).trim()) return { sections: [], playbackQueue: [] };
+    let entry = this.#playlistSearchCache.get(id);
+    if (!entry || entry.expires < Date.now()) {
+      if (this.#playlistSearchCache.size >= 20) this.#playlistSearchCache.clear();
+      const promise = this.playlist(id);
+      entry = { promise, expires: Infinity };
+      this.#playlistSearchCache.set(id, entry);
+      promise.then(() => { entry.expires = Date.now() + 60000; }, () => { if (this.#playlistSearchCache.get(id) === entry) this.#playlistSearchCache.delete(id); });
+    }
+    const playlist = await entry.promise;
+    const key = searchKey(query);
+    const items = playlist.items.filter((item) => searchKey([item.title, item.artist, item.album].filter(Boolean).join(' ')).includes(key));
+    return { sections: [{ id: 'playlist-search', title: 'Matching songs', items }], playbackQueue: playlist.items };
+  }
+
+  async browseRelated(media, kind) {
+    if (!['artist', 'album'].includes(kind)) throw new Error('Invalid destination');
+    let name = kind === 'artist' ? String(media?.artist ?? '').replace(/\s*-\s*Topic$/i, '').split(',')[0].trim() : media?.album;
+    if (kind === 'album' && !name) {
+      const songs = await this.search([media?.title, media?.artist].filter(Boolean).join(' '), { type: 'song' });
+      const candidates = songs.sections.flatMap((section) => section.items);
+      const song = candidates.find((item) => item.videoId === (media?.videoId ?? media?.id));
+      if (song?.albumBrowseId) return this.browse({ id: song.albumBrowseId, type: 'album' });
+      name = song?.album;
+    }
+    if (!name) throw new Error(`No ${kind} information is available for this song.`);
+    const response = await this.search(name, { type: kind });
+    const candidates = response.sections.flatMap((section) => section.items);
+    const match = candidates.find((item) => searchKey(item.title) === searchKey(name) &&
+      (kind === 'artist' || !media.artist || searchKey(item.artist).includes(searchKey(String(media.artist).split(',')[0]))));
+    if (!match) throw new Error(`Could not find an exact ${kind} match. Try the ${kind} Search tab.`);
+    return this.browse(match);
   }
 
   async suggestions(query) {
@@ -152,7 +189,7 @@ export class YouTubeMusicService {
           {
             id: 'tracks',
             title: 'Tracks',
-            items: Array.from(playlist.items ?? []).map((item) => normalizeMediaNode(item)).filter(Boolean),
+            items: await fullPlaylistItems(playlist),
           },
         ],
       };
@@ -163,7 +200,7 @@ export class YouTubeMusicService {
       return {
         id,
         title: artist.header?.title?.toString?.() ?? media?.title ?? 'Artist',
-        sections: Array.from(artist.sections ?? []).map(normalizeSection),
+        sections: await artistSections(artist),
       };
     }
 
@@ -186,7 +223,7 @@ export class YouTubeMusicService {
     return {
       id: playlistId,
       title: playlist.header?.title?.toString?.() ?? playlistId,
-      items: Array.from(playlist.items ?? []).map((item) => normalizeMediaNode(item)).filter(Boolean),
+      items: await fullPlaylistItems(playlist),
     };
   }
 
@@ -638,4 +675,32 @@ export const libraryFromParsedResponse = (parsed) => {
       .filter(Boolean),
     sections: sectionsFromParsedResponse(parsed),
   };
+};
+
+const searchKey = (value) => String(value ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+export const artistSections = async (artist) => {
+  const sections = Array.from(artist.sections ?? []).map(normalizeSection);
+  // The artist page exposes only a preview; follow its All songs endpoint.
+  try {
+    const all = await artist.getAllSongs();
+    const expanded = all ? normalizeSection({ title: 'Top songs', contents: all.contents }) : null;
+    if (expanded?.items.length) {
+      const index = sections.findIndex((section) => /top songs/i.test(section.title));
+      if (index >= 0) sections[index] = expanded;
+      else sections.unshift(expanded);
+    }
+  } catch { /* Keep the usable artist page when its All songs endpoint is absent. */ }
+  return sections;
+};
+
+// Follow public playlist pages as well as OAuth Library pages for full-playlist search.
+export const fullPlaylistItems = async (playlist, limit = 5000) => {
+  const items = [];
+  let page = playlist;
+  for (let pages = 0; page && pages < 100 && items.length < limit; pages++) {
+    items.push(...Array.from(page.items ?? []).map((item) => normalizeMediaNode(item)).filter(Boolean).slice(0, limit - items.length));
+    if (!page.has_continuation || items.length >= limit) break;
+    page = await page.getContinuation();
+  }
+  return items;
 };

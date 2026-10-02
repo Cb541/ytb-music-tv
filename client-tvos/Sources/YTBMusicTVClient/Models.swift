@@ -50,12 +50,19 @@ struct MediaItem: Codable, Identifiable, Equatable {
 }
 
 extension MediaItem {
+    func matchesSearch(_ query: String) -> Bool {
+        let key = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty || [title, artist, album ?? ""].joined(separator: " ").range(of: key, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
     var isPlayable: Bool {
         videoId != nil || streamUrl != nil
     }
 }
 
 struct MediaSectionResponse: Codable, Equatable {
+    var title: String?
+    var playbackQueue: [MediaItem]?
     var continuation: String?
     var authRequired: Bool?
     var reason: String?

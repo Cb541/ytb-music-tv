@@ -222,3 +222,17 @@ The right auxiliary control group moves eight points farther down, changing its 
 ## Closer boxless left controls
 
 The left control gaps decrease from 24 to 16 points now that their boxes are removed. Larger play/pause dimensions, icon focus glow and leading alignment are retained.
+
+## Search and artist navigation (v45)
+
+Left playback controls move down five points and their gaps shrink from sixteen to eight points. Shuffle retains its horizontal position and every button retains its dimensions.
+
+Search adds All, Songs, Artists, Albums and Playlists category tabs. Playlists includes public/community playlists returned by YouTube Music. Artist results open artist pages with albums and related sections; the Top songs preview expands through YouTube Music's All songs endpoint where available. The top-left artist label opens a menu for View artist or View album, returning to Search while audio continues. Album lookup can recover missing album metadata from an exact song result. Exact destination matching avoids opening an unrelated artist or album.
+
+Opened playlists in Home/Library and Search offer Search this playlist. Queries match titles, artists and albums without case or diacritic sensitivity. The server scans all playlist pages up to its existing 5,000-song safety limit (public playlists additionally bounded to 100 pages), shares concurrent scans and caches snapshots for sixty seconds. Initial large-playlist searches can take time; repeated queries reuse the snapshot. Selecting a match passes the full scanned playback queue, preserving subsequent playback order. Queue search filters the current playback queue as background hydration continues.
+
+Both the v45 Docker server update and TV IPA are required for the new playlist/artist routes. The server updater backs up changed source files and rebuilds only the server service. Forty-eight Node tests verify routing, search caching/retry, full-queue preservation, playlist continuation, artist expansion/fallback and normalization. New Foundation tests cover local matching and response decoding; GitHub Actions runs those and compiles the tvOS IPA. No Apple SDK is available in the local workspace, so device focus, layout and live catalog results still require on-device verification.
+
+## Visible shuffle state (v46)
+
+The Shuffle button shows parallel repeat-style arrows when shuffle is Off, matching the reference arrow design without its circle or colors. When shuffle is On it switches to crossed shuffle arrows. Its 25-point semibold symbol, artwork accent color, original hit area and position stay unchanged. State is driven by the existing playback shuffle flag, so it remains visible after the focus glow times out. Accessibility continues to announce Shuffle On/Off.

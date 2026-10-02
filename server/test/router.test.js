@@ -526,3 +526,19 @@ const createResponse = () => ({
     this.body += body;
   },
 });
+
+test('category search and new read-only browsing routes forward their parameters', async () => {
+  const calls = [];
+  const router = makeRouter({
+    search: async (query, filters) => { calls.push(['search', query, filters.type]); return { sections: [] }; },
+    playlistSearch: async (media, query) => { calls.push(['playlist', media.id, query]); return { sections: [], playbackQueue: [] }; },
+    browseRelated: async (media, kind) => { calls.push(['related', media.artist, kind]); return { sections: [] }; },
+  });
+  for (const type of ['all', 'song', 'artist', 'album', 'playlist']) {
+    const res = createResponse(); await router(createRequest('GET', '/api/search?q=Artist&type=' + type), res); assert.equal(res.status, 200);
+  }
+  for (const [path, body] of [['/api/playlist/search', { media: { id: 'PLtest' }, query: 'song' }], ['/api/browse/related', { media: { artist: 'Artist' }, kind: 'artist' }]]) {
+    const res = createResponse(); await router(createRequest('POST', path, body), res); assert.equal(res.status, 200);
+  }
+  assert.deepEqual(calls.slice(-2), [['playlist', 'PLtest', 'song'], ['related', 'Artist', 'artist']]);
+});

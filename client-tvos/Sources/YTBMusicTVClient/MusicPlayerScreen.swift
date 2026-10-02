@@ -5,6 +5,8 @@ struct MusicPlayerScreen: View {
     @ObservedObject var viewModel: PlayerViewModel
     let l10n: L10n
     let onBack: () -> Void
+    var onBrowse: () -> Void = {}
+    @State private var queueQuery = ""
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var assets = MusicPresentationAssets()
@@ -34,12 +36,21 @@ struct MusicPlayerScreen: View {
                         .overlay(Color.black.opacity(0.55))
                 }
                 VStack(alignment: .leading, spacing: 24) {
-                    Text(displayedMedia?.artist ?? "")
-                        .font(.system(size: 26, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, -30)
+                    Menu {
+                        Button("View artist") { openRelated("artist") }
+                        Button("View album") { openRelated("album") }
+                    } label: {
+                        Text(displayedMedia?.artist ?? "")
+                            .font(.system(size: 26, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .lineLimit(1)
+                            .shadow(color: assets.accentColor.opacity(controlHighlightVisible && focusedControl == "Artist" ? 0.9 : 0), radius: 8)
+                    }
+                    .buttonStyle(RemoteButtonStyle())
+                    .focusEffectDisabled().focused($focusedControl, equals: "Artist")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, -30)
+                    .disabled(displayedMedia == nil || viewModel.isSearching)
                     GeometryReader { stage in
                         HStack(alignment: .center, spacing: 80) {
                             VStack(alignment: lyricsVisible ? .leading : .center, spacing: 34) {
@@ -157,8 +168,8 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                HStack(spacing: 16) {
-                    control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
+                HStack(spacing: 8) {
+                    control(viewModel.state?.shuffle == true ? "shuffle" : "repeat", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
                     control("backward.end.fill", label: "Previous", boxless: true) { Task { await viewModel.previous() } }
@@ -178,6 +189,7 @@ struct MusicPlayerScreen: View {
                     }
                 }
                 .padding(.leading, -55)
+                .offset(y: 5)
                 Spacer()
                 HStack(spacing: 4) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
@@ -228,6 +240,11 @@ struct MusicPlayerScreen: View {
         .accessibilityValue(selected ? "On" : "Off")
     }
 
+    private func openRelated(_ kind: String) {
+        guard let media = displayedMedia else { return }
+        Task { if await viewModel.openRelated(media, kind: kind) { onBrowse() } }
+    }
+
     private func closeLyrics() {
         lyricsVisible = false
         focusedControl = "Lyrics"
@@ -253,9 +270,11 @@ struct MusicPlayerScreen: View {
                 Button("Done") { closeQueue() }.buttonStyle(.bordered)
                     .focused($queueCloseFocused)
             }
+            TextField("Search Queue: song, artist or album", text: $queueQuery)
+                .font(.title3)
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    ForEach(viewModel.state?.queue ?? []) { media in
+                    ForEach((viewModel.state?.queue ?? []).filter { $0.matchesSearch(queueQuery) }) { media in
                         Button {
                             closeQueue()
                             Task { _ = await viewModel.play(media, queue: viewModel.state?.queue ?? []) }
@@ -284,7 +303,7 @@ struct MusicPlayerScreen: View {
         }
         .padding(60)
         .foregroundStyle(.white)
-        .onAppear { queueCloseFocused = true }
+        .onAppear { queueCloseFocused = true; queueQuery = "" }
     }
 }
 

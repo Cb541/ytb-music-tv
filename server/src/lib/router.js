@@ -119,6 +119,15 @@ export const createApiRouter = ({
       return json(res, 200, withSectionPlaybackUrls(result, baseUrl), corsHeaders());
     }
 
+    if (pathname === '/api/playlist/search' || pathname === '/api/browse/related') {
+      if (req.method !== 'POST') return methodNotAllowed(res);
+      const body = await readJson(req);
+      const result = pathname === '/api/playlist/search'
+        ? await youtubeService.playlistSearch(body.media, String(body.query ?? '').slice(0, 200))
+        : await youtubeService.browseRelated(body.media, body.kind);
+      return json(res, 200, withSectionPlaybackUrls(result, baseUrl), corsHeaders());
+    }
+
     if (pathname === '/api/search/suggestions') {
       if (req.method !== 'GET') return methodNotAllowed(res);
       const query = url.searchParams.get('q') ?? '';
