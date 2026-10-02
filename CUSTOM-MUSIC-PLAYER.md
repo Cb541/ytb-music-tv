@@ -214,3 +214,11 @@ The centered artwork moves upward eight points independently of the song title. 
 ## Matching title styling and boxless left controls
 
 Song titles use the same system font, medium weight and white at 0.75 opacity as the top-left artist label. Existing 34-point centered and 30-point lyric title sizes are retained. All left playback controls remove their box backgrounds while preserving their original content sizes, 16-point horizontal padding, gaps and position, including the larger play/pause button. The artwork-colored icon focus glow and two-second emphasis timeout remain.
+
+## Lower right controls
+
+The right auxiliary control group moves eight points farther down, changing its vertical offset from five to thirteen points.
+
+## Closer boxless left controls
+
+The left control gaps decrease from 24 to 16 points now that their boxes are removed. Larger play/pause dimensions, icon focus glow and leading alignment are retained.

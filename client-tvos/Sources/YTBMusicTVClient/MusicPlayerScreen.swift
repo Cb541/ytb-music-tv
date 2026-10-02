@@ -157,7 +157,7 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                HStack(spacing: 24) {
+                HStack(spacing: 16) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
@@ -205,7 +205,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
                 .padding(.trailing, -37)
-                .offset(y: 5)
+                .offset(y: 13)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
