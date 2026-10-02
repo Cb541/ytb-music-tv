@@ -169,7 +169,7 @@ struct MusicPlayerScreen: View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
                 HStack(spacing: 8) {
-                    control(viewModel.state?.shuffle == true ? "shuffle" : "repeat", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
+                    control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
                     control("backward.end.fill", label: "Previous", boxless: true) { Task { await viewModel.previous() } }
@@ -193,8 +193,12 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 HStack(spacing: 4) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
-                    if viewModel.currentStreamHasVideo {
-                        control("video", label: "Music video", selected: videoVisible, compact: true, boxless: true) { videoVisible.toggle() }
+                    control("dot.radiowaves.left.and.right", label: "Mix", selected: viewModel.isMixActive, compact: true, boxless: true) {
+                        viewModel.startMix()
+                    }
+                    .disabled(viewModel.isLoadingMix || displayedMedia?.videoId == nil)
+                    .overlay {
+                        if viewModel.isLoadingMix { ProgressView().scaleEffect(0.6).allowsHitTesting(false) }
                     }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -228,7 +232,16 @@ struct MusicPlayerScreen: View {
 
     private func control(_ icon: String, label: String, selected: Bool = false, uniformBackground: Bool = false, compact: Bool = false, boxless: Bool = false, action: @escaping () -> Void) -> some View {
         Button { noteControlActivity(); action() } label: {
-            Image(systemName: icon).font(.system(size: 25, weight: .semibold)).frame(width: 48, height: 44)
+            Group {
+                if label == "Shuffle" && !selected {
+                    OrderedPlaybackArrows()
+                        .stroke(style: StrokeStyle(lineWidth: 2.6, lineCap: .square, lineJoin: .miter))
+                        .frame(width: 25, height: 25)
+                } else {
+                    Image(systemName: icon).font(.system(size: 25, weight: .semibold))
+                }
+            }
+            .frame(width: 48, height: 44)
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
@@ -269,6 +282,16 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 Button("Done") { closeQueue() }.buttonStyle(.bordered)
                     .focused($queueCloseFocused)
+            }
+            HStack(spacing: 24) {
+                if viewModel.currentStreamHasVideo {
+                    Button(videoVisible ? "Hide music video" : "Show music video", systemImage: "video") {
+                        videoVisible.toggle(); closeQueue()
+                    }
+                    .buttonStyle(.bordered).tint(assets.accentColor)
+                }
+                if viewModel.isMixActive { Label("Song mix", systemImage: "dot.radiowaves.left.and.right").foregroundStyle(assets.accentColor) }
+                if viewModel.isLoadingMix { ProgressView("Finding similar songs…") }
             }
             TextField("Search Queue: song, artist or album", text: $queueQuery)
                 .font(.title3)
@@ -481,5 +504,28 @@ private struct MusicQueueButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(highlighted ? 0.20 : 0.04)))
             .opacity(configuration.isPressed ? 0.8 : 1)
+    }
+}
+
+// Angular parallel arrows distinguish ordered playback from the rounded Repeat symbol.
+private struct OrderedPlaybackArrows: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+        }
+        path.move(to: point(0.12, 0.42))
+        path.addLine(to: point(0.12, 0.22))
+        path.addLine(to: point(0.86, 0.22))
+        path.move(to: point(0.66, 0.06))
+        path.addLine(to: point(0.86, 0.22))
+        path.addLine(to: point(0.66, 0.38))
+        path.move(to: point(0.88, 0.58))
+        path.addLine(to: point(0.88, 0.78))
+        path.addLine(to: point(0.14, 0.78))
+        path.move(to: point(0.34, 0.62))
+        path.addLine(to: point(0.14, 0.78))
+        path.addLine(to: point(0.34, 0.94))
+        return path
     }
 }

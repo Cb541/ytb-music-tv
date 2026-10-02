@@ -232,6 +232,11 @@ export class YouTubeMusicService {
     return normalizeTrackInfo(info);
   }
 
+  async mix(videoId) {
+    const client = await this.#client();
+    return await recommendedMix(client.music, videoId);
+  }
+
   async related(videoId) {
     const client = await this.#client();
     const related = await client.music.getRelated(videoId);
@@ -703,4 +708,17 @@ export const fullPlaylistItems = async (playlist, limit = 5000) => {
     page = await page.getContinuation();
   }
   return items;
+};
+
+export const recommendedMix = async (music, videoId) => {
+  const panel = await music.getUpNext(videoId, true);
+  const seen = new Set([videoId]);
+  const items = Array.from(panel?.contents ?? []).flatMap((node) => {
+    if (!node?.video_id || seen.has(node.video_id)) return [];
+    seen.add(node.video_id);
+    const media = normalizeMediaNode({ ...node, id: node.video_id, item_type: 'song',
+      artists: node.artists?.length ? node.artists : [{ name: String(node.author ?? '') }] });
+    return media ? [media] : [];
+  });
+  return { sections: [{ id: 'song-mix', title: 'Song mix', items }] };
 };

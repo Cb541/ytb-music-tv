@@ -236,3 +236,15 @@ Both the v45 Docker server update and TV IPA are required for the new playlist/a
 ## Visible shuffle state (v46)
 
 The Shuffle button shows parallel repeat-style arrows when shuffle is Off, matching the reference arrow design without its circle or colors. When shuffle is On it switches to crossed shuffle arrows. Its 25-point semibold symbol, artwork accent color, original hit area and position stay unchanged. State is driven by the existing playback shuffle flag, so it remains visible after the focus glow times out. Accessibility continues to announce Shuffle On/Off.
+
+## Sharper ordered-playback arrows (v47)
+
+Shuffle Off now uses a custom vector with angular return corners, sharp arrowheads and square stroke caps instead of the rounded system Repeat symbol. Its 25-point bounds, artwork tint, control dimensions and focus styling remain. Shuffle On keeps the crossed shuffle symbol; the dedicated Repeat button is unchanged.
+
+## Song mix and Queue video option (v48)
+
+The right-side Video icon is replaced by an artwork-tinted Mix broadcast-wave icon, using the other compact icons' size, spacing, hit area and focus glow. Selecting it requests YouTube Music's getUpNext Automix recommendations for the current song, preserving current playback while replacing the playlist queue with that song followed by recommendations. Recommendations are not restricted to the seed artist. Loading feedback appears on the button; Queue displays Song mix while active. Shuffle and repeat-one are cleared when the mix starts so recommendations follow their returned order.
+
+The player requests additional recommendations seeded from the last queued song when six or fewer songs remain. It deduplicates already-queued songs, preserves the existing queue on failure, and rejects stale initial requests after a playback change. Choosing a different playlist cancels mix loading; selecting a song from the existing queue retains the mix. Empty recommendations are reported instead of pretending a station started.
+
+Show/Hide music video moves to the top of Queue when video is available. The control returns to the player after toggling. Both the v48 server update and the TV IPA are required for the new Mix route. Fifty Node tests now cover Automix requests, recommendation ordering, different artists, deduplication, metadata, failure propagation and the read-only HTTP route. GitHub Actions provides Swift/tvOS compilation; live recommendation quality, focus behavior and ongoing refill need Apple TV verification.

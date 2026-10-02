@@ -86,6 +86,11 @@ final class PlayerViewModel: ObservableObject {
     private var playbackQueueTask: Task<Void, Never>?
     private var playbackQueueRevision = UUID()
     @Published private(set) var isLoadingPlaybackQueue = false
+    @Published private(set) var isLoadingMix = false
+    @Published private(set) var isMixActive = false
+    private var mixTask: Task<Void, Never>?
+    private var mixRevision = UUID()
+    private var lastMixSeedID: String?
     private var loadingPlaylistCursors = Set<String>()
     private var browseRequestID = UUID()
     private var homeLoadRevision = 0
@@ -143,6 +148,7 @@ final class PlayerViewModel: ObservableObject {
     // MARK: - Data source
 
     func connect(to baseURL: URL, accessToken: String? = nil) async {
+        cancelMix()
         cancelPlaybackQueueLoading()
         connectionRevision &+= 1
         let revision = connectionRevision
@@ -373,7 +379,7 @@ final class PlayerViewModel: ObservableObject {
     func play(_ media: MediaItem, queue: [MediaItem] = []) async -> Bool {
         let continuation = queue.first { $0.type == "playlist-page" }
         let reusesQueue = queue.isEmpty || (continuation == nil && queue == state?.queue)
-        if !reusesQueue { cancelPlaybackQueueLoading() }
+        if !reusesQueue { cancelMix(); cancelPlaybackQueueLoading() }
         let started = await startPlayback(
             media,
             replacingQueue: reusesQueue ? nil : queue.filter(\.isPlayable),
@@ -381,6 +387,69 @@ final class PlayerViewModel: ObservableObject {
         )
         if started, let continuation { loadPlaybackQueue(from: continuation) }
         return started
+    }
+
+    func startMix() {
+        guard state?.currentMedia != nil else { return }
+        cancelMix()
+        requestMix(replacing: true)
+    }
+
+    private func cancelMix() {
+        mixRevision = UUID()
+        mixTask?.cancel(); mixTask = nil
+        isLoadingMix = false; isMixActive = false; lastMixSeedID = nil
+    }
+
+    private func maybeExtendMix() {
+        guard isMixActive, !isLoadingMix, let current = state,
+              let index = current.queue.firstIndex(where: { $0.id == current.currentMediaId }),
+              current.queue.count - index <= 6 else { return }
+        requestMix(replacing: false)
+    }
+
+    private func requestMix(replacing: Bool) {
+        guard let client, let current = state,
+              let seed = replacing ? current.currentMedia : current.queue.last,
+              let seedID = seed.videoId, seedID != lastMixSeedID else { return }
+        let revision = mixRevision
+        let requestID = playbackRequestID
+        lastMixSeedID = seedID
+        isLoadingMix = true
+        mixTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.mixRevision == revision { self.isLoadingMix = false; self.mixTask = nil }
+            }
+            do {
+                let response = try await client.mix(mediaId: seedID)
+                guard !Task.isCancelled, self.mixRevision == revision, var next = self.state,
+                      !replacing || self.playbackRequestID == requestID else { return }
+                var seen = Set((replacing ? [seed] : next.queue).map { $0.videoId ?? $0.id })
+                let songs = self.applyingKnownRatings(to: response.sections.flatMap(\.items)).filter {
+                    $0.isPlayable && seen.insert($0.videoId ?? $0.id).inserted
+                }
+                guard !songs.isEmpty else {
+                    if replacing { self.errorMessage = "No mix recommendations are available for this song." }
+                    return
+                }
+                if replacing {
+                    self.cancelPlaybackQueueLoading()
+                    self.cancelCrossfade()
+                    next.queue = [next.currentMedia ?? seed] + songs
+                    next.shuffle = false; next.repeatMode = "off"
+                    self.isMixActive = true
+                } else { next.queue.append(contentsOf: songs) }
+                self.state = next
+                self.errorMessage = nil
+                self.scheduleNextPlaybackPrecache()
+            } catch {
+                if !Task.isCancelled && self.mixRevision == revision {
+                    self.errorMessage = "Could not load the song mix: " + error.localizedDescription
+                    self.lastMixSeedID = nil
+                }
+            }
+        }
     }
 
     private func cancelPlaybackQueueLoading() {
@@ -516,7 +585,7 @@ final class PlayerViewModel: ObservableObject {
         }
 
         let currentID = state.currentMediaId
-        while nextPlaybackItem(for: state) == nil && isLoadingPlaybackQueue {
+        while nextPlaybackItem(for: state) == nil && (isLoadingPlaybackQueue || isLoadingMix) {
             do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
             guard let updated = self.state, updated.currentMediaId == currentID else { return }
             state = updated
@@ -1285,6 +1354,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func scheduleNextPlaybackPrecache() {
+        maybeExtendMix()
         nextPlaybackTask?.cancel()
         nextPlaybackTask = nil
         standbyPlayer?.pause()

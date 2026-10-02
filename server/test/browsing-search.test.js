@@ -61,3 +61,22 @@ test('public playlist search follows continuation pages in playback order', asyn
   assert.deepEqual((await fullPlaylistItems(first)).map(item => item.title), ['First', 'Second']);
   assert.equal((await fullPlaylistItems(first, 1)).length, 1);
 });
+
+test('song mix uses YouTube automix and retains different artists in recommendation order', async () => {
+  const { recommendedMix } = await import('../src/services/youtube-service.js');
+  const calls = [];
+  const music = { getUpNext: async (...args) => { calls.push(args); return { contents: [
+    { video_id: 'aaaaaaaaaaa', title: 'Seed' },
+    { video_id: 'bbbbbbbbbbb', title: 'Similar', author: 'Other artist', duration: { seconds: 240 }, thumbnail: [{ url: 'https://img.example/cover.jpg', width: 100 }] },
+    { type: 'AutomixPreviewVideo' },
+    { video_id: 'bbbbbbbbbbb', title: 'Duplicate' },
+    { video_id: 'ccccccccccc', title: 'Another', artists: [{ name: 'Third artist' }] },
+  ] }; } };
+  const result = await recommendedMix(music, 'aaaaaaaaaaa');
+  assert.deepEqual(calls, [['aaaaaaaaaaa', true]]);
+  assert.deepEqual(result.sections[0].items.map(item => item.videoId), ['bbbbbbbbbbb', 'ccccccccccc']);
+  assert.deepEqual(result.sections[0].items.map(item => item.artist), ['Other artist', 'Third artist']);
+  assert.equal(result.sections[0].items[0].durationMs, 240000);
+  assert.equal(result.sections[0].items[0].artworkUrl, 'https://img.example/cover.jpg');
+  await assert.rejects(recommendedMix({ getUpNext: async () => { throw Error('unavailable'); } }, 'aaaaaaaaaaa'), /unavailable/);
+});

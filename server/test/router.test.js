@@ -542,3 +542,14 @@ test('category search and new read-only browsing routes forward their parameters
   }
   assert.deepEqual(calls.slice(-2), [['playlist', 'PLtest', 'song'], ['related', 'Artist', 'artist']]);
 });
+
+test('song mix route returns playable recommendations and rejects mutations', async () => {
+  const calls = [];
+  const router = makeRouter({ mix: async (id) => { calls.push(id); return { sections: [{ id: 'mix', title: 'Mix', items: [{ id: 'bbbbbbbbbbb', videoId: 'bbbbbbbbbbb' }] }] }; } });
+  const res = createResponse(); await router(createRequest('GET', '/api/media/aaaaaaaaaaa/mix'), res);
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls, ['aaaaaaaaaaa']);
+  assert.match(JSON.parse(res.body).sections[0].items[0].playbackUrl, /bbbbbbbbbbb/);
+  const rejected = createResponse(); await router(createRequest('POST', '/api/media/aaaaaaaaaaa/mix'), rejected);
+  assert.equal(rejected.status, 405);
+});

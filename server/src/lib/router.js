@@ -207,6 +207,12 @@ export const createApiRouter = ({
       }
     }
 
+    const mixMatch = pathname.match(/^\/api\/media\/([^/]+)\/mix$/);
+    if (mixMatch) {
+      if (req.method !== 'GET') return methodNotAllowed(res);
+      return json(res, 200, withSectionPlaybackUrls(await youtubeService.mix(mixMatch[1]), baseUrl), corsHeaders());
+    }
+
     const relatedMatch = pathname.match(/^\/api\/media\/([^/]+)\/related$/);
     if (relatedMatch) {
       if (req.method !== 'GET') return methodNotAllowed(res);
