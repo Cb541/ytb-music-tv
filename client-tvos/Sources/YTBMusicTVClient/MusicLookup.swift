@@ -41,6 +41,19 @@ enum MusicLookup {
         return components.url
     }
 
+    static func playerHeading(_ media: MediaItem) -> String {
+        let artist = media.artist.components(separatedBy: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: #"(?i)\s*[-–—]\s*Topic$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }.joined(separator: ", ")
+        guard let album = media.album?.trimmingCharacters(in: .whitespacesAndNewlines), !album.isEmpty else { return artist }
+        // Some providers expose singles as albums named after the song.
+        let isSingle = normalized(album) == "single" || album.range(of: #"(?i)(?:\s*[-–—]\s*|\s+|\s*\()(?:single)\)?$"#, options: .regularExpression) != nil
+            || normalized(album) == normalized(songTitle(media.title, artist: artist))
+        guard !isSingle else { return artist }
+        return artist.isEmpty ? album : artist + " • " + album
+    }
+
     static func songTitle(_ value: String, artist: String) -> String {
         let title = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let separator = title.range(of: #"\s+[-–—]\s+"#, options: .regularExpression) else { return title }

@@ -132,6 +132,20 @@ enum PlaybackAndLyricsTests {
         precondition(searchable.matchesSearch(" ") && !searchable.matchesSearch("missing"))
         let found = try JSONDecoder().decode(MediaSectionResponse.self, from: Data(#"{"sections":[],"playbackQueue":[{"id":"match","title":"Song"}],"title":"Artist"}"#.utf8))
         precondition(found.playbackQueue?.first?.id == "match" && found.title == "Artist")
+        var headingMedia = searchable
+        headingMedia.artist = "Pink Floyd - Topic  "
+        headingMedia.title = "Pink Floyd - Comfortably Numb"
+        headingMedia.album = "The Wall"
+        precondition(MusicLookup.playerHeading(headingMedia) == "Pink Floyd • The Wall")
+        headingMedia.album = nil
+        precondition(MusicLookup.playerHeading(headingMedia) == "Pink Floyd")
+        for single in ["Comfortably Numb", "Another Track - Single", "Another Track (Single)", "Single"] {
+            headingMedia.album = single
+            precondition(MusicLookup.playerHeading(headingMedia) == "Pink Floyd")
+        }
+        headingMedia.artist = "Artist – Topic, Guest - Topic"
+        headingMedia.album = "Album"
+        precondition(MusicLookup.playerHeading(headingMedia) == "Artist, Guest • Album")
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

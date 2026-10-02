@@ -252,3 +252,11 @@ Show/Hide music video moves to the top of Queue when video is available. The con
 ## Lyric-mode title refinement (v49)
 
 The lyric-mode song title increases from 30 to 32 points and moves six points to the right. Its medium font weight, white 0.75 opacity, vertical position and artwork spacing remain. Centered-mode text is unchanged.
+
+## Minimal lyric title shift (v50)
+
+The lyric-mode title's rightward offset reduces from six to two points for a very small shift. The larger 32-point font remains.
+
+## Artist and album in the header (v51)
+
+Album metadata moves from below the song title into the top-left clickable heading, formatted Artist • Album. Topic channel suffixes are stripped from each artist for display. Missing albums, explicitly Single-labeled releases, and album names matching the song title display only the artist. The metadata does not include authoritative release type, so title equality is a single-detection heuristic. Song titles retain their existing sizes and offsets; the navigation menu still uses original metadata for lookup. Foundation checks cover album, missing metadata, single labels, title matching and multiple Topic artists.

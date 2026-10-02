@@ -40,7 +40,7 @@ struct MusicPlayerScreen: View {
                         Button("View artist") { openRelated("artist") }
                         Button("View album") { openRelated("album") }
                     } label: {
-                        Text(displayedMedia?.artist ?? "")
+                        Text(displayedMedia.map { MusicLookup.playerHeading($0) } ?? "")
                             .font(.system(size: 26, weight: .medium))
                             .foregroundStyle(.white.opacity(0.75))
                             .lineLimit(1)
@@ -157,10 +157,7 @@ struct MusicPlayerScreen: View {
                 .font(.system(size: lyricsVisible ? 32 : 34, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
-                .offset(x: lyricsVisible ? 6 : 0)
-            if !lyricsVisible, let album = displayedMedia?.album, !album.isEmpty {
-                Text(album).font(.system(size: 26)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
-            }
+                .offset(x: lyricsVisible ? 2 : 0)
         }
         .multilineTextAlignment(lyricsVisible ? .leading : .center)
         .foregroundStyle(.white)
