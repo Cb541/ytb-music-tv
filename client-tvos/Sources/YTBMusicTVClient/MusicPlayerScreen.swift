@@ -154,9 +154,10 @@ struct MusicPlayerScreen: View {
     private var trackDetails: some View {
         VStack(alignment: lyricsVisible ? .leading : .center, spacing: 8) {
             Text(displayedMedia.map { MusicLookup.songTitle($0.title, artist: $0.artist) } ?? "Choose a song")
-                .font(.system(size: lyricsVisible ? 30 : 34, weight: .medium))
+                .font(.system(size: lyricsVisible ? 32 : 34, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
+                .offset(x: lyricsVisible ? 6 : 0)
             if !lyricsVisible, let album = displayedMedia?.album, !album.isEmpty {
                 Text(album).font(.system(size: 26)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
             }

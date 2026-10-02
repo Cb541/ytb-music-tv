@@ -248,3 +248,7 @@ The right-side Video icon is replaced by an artwork-tinted Mix broadcast-wave ic
 The player requests additional recommendations seeded from the last queued song when six or fewer songs remain. It deduplicates already-queued songs, preserves the existing queue on failure, and rejects stale initial requests after a playback change. Choosing a different playlist cancels mix loading; selecting a song from the existing queue retains the mix. Empty recommendations are reported instead of pretending a station started.
 
 Show/Hide music video moves to the top of Queue when video is available. The control returns to the player after toggling. Both the v48 server update and the TV IPA are required for the new Mix route. Fifty Node tests now cover Automix requests, recommendation ordering, different artists, deduplication, metadata, failure propagation and the read-only HTTP route. GitHub Actions provides Swift/tvOS compilation; live recommendation quality, focus behavior and ongoing refill need Apple TV verification.
+
+## Lyric-mode title refinement (v49)
+
+The lyric-mode song title increases from 30 to 32 points and moves six points to the right. Its medium font weight, white 0.75 opacity, vertical position and artwork spacing remain. Centered-mode text is unchanged.
