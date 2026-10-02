@@ -143,7 +143,8 @@ struct MusicPlayerScreen: View {
     private var trackDetails: some View {
         VStack(alignment: lyricsVisible ? .leading : .center, spacing: 8) {
             Text(displayedMedia.map { MusicLookup.songTitle($0.title, artist: $0.artist) } ?? "Choose a song")
-                .font(.system(size: lyricsVisible ? 30 : 34, weight: .bold))
+                .font(.system(size: lyricsVisible ? 30 : 34, weight: .medium))
+                .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
             if !lyricsVisible, let album = displayedMedia?.album, !album.isEmpty {
                 Text(album).font(.system(size: 26)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
@@ -157,22 +158,22 @@ struct MusicPlayerScreen: View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
                 HStack(spacing: 24) {
-                    control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true) {
+                    control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
-                    control("backward.end.fill", label: "Previous") { Task { await viewModel.previous() } }
+                    control("backward.end.fill", label: "Previous", boxless: true) { Task { await viewModel.previous() } }
                     Button { noteControlActivity(); Task { await viewModel.togglePlayPause() } } label: {
                         Image(systemName: viewModel.state?.status == "playing" ? "pause.fill" : "play.fill")
                             .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "PlayPause"))
+                        highlighted: controlHighlightVisible && focusedControl == "PlayPause", showsBackground: false, horizontalPadding: 16))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                     .disabled(scrubbing)
-                    control("forward.end.fill", label: "Next") { Task { await viewModel.next() } }
-                    control("repeat.1", label: "Repeat song", selected: viewModel.state?.repeatMode == "one") {
+                    control("forward.end.fill", label: "Next", boxless: true) { Task { await viewModel.next() } }
+                    control("repeat.1", label: "Repeat song", selected: viewModel.state?.repeatMode == "one", boxless: true) {
                         Task { await viewModel.toggleRepeatOne() }
                     }
                 }
@@ -219,7 +220,7 @@ struct MusicPlayerScreen: View {
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? nil : 16))
         .scaleEffect(compact ? 0.9 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
@@ -435,10 +436,11 @@ private struct MusicControlButtonStyle: ButtonStyle {
     let highlighted: Bool
     var backgroundOpacity = 0.08
     var showsBackground = true
+    var horizontalPadding: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, showsBackground ? 16 : 8)
+            .padding(.horizontal, horizontalPadding ?? (showsBackground ? 16 : 8))
             .padding(.vertical, 12)
             .background(RoundedRectangle(cornerRadius: 12).fill(accent.opacity(showsBackground ? backgroundOpacity + (highlighted ? 0.10 : 0) : 0)))
             .brightness(highlighted && !showsBackground ? 0.16 : 0)

@@ -210,3 +210,7 @@ Boxless right controls reduce their horizontal internal padding from 16 to 8 poi
 ## Centered artwork nudge upward
 
 The centered artwork moves upward eight points independently of the song title. Lyric-mode artwork, song metadata and playback controls retain their positions.
+
+## Matching title styling and boxless left controls
+
+Song titles use the same system font, medium weight and white at 0.75 opacity as the top-left artist label. Existing 34-point centered and 30-point lyric title sizes are retained. All left playback controls remove their box backgrounds while preserving their original content sizes, 16-point horizontal padding, gaps and position, including the larger play/pause button. The artwork-colored icon focus glow and two-second emphasis timeout remain.
