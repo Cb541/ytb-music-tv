@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   libraryFromParsedResponse,
   selectTvOSFormats,
+  upgradeMusicAudio,
   YouTubeMusicService,
 } from '../src/services/youtube-service.js';
 
@@ -119,8 +120,42 @@ test('selects adaptive H.264 video and AAC audio at the requested tvOS quality',
   assert.equal(capped.video, video720);
 
   const efficient = selectTvOSFormats(info, { preferVideo: true, quality: 'bestefficiency' });
-  assert.equal(efficient.video, null);
-  assert.equal(efficient.audio, null);
+  assert.equal(efficient.video, progressive);
+  assert.equal(efficient.audio, audio);
 });
 
 const format = (values) => ({ bitrate: 1, has_audio: false, has_video: false, ...values });
+
+test('selects highest AAC bitrate for audio-only and video without tying audio to resolution', () => {
+  const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 48000 });
+  const high = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 256000 });
+  const opus = format({ has_audio: true, mime_type: 'audio/webm; codecs="opus"', bitrate: 300000 });
+  const progressive = format({ has_audio: true, has_video: true, height: 720, mime_type: 'video/mp4; codecs="avc1, mp4a.40.2"' });
+  const video = format({ has_video: true, height: 720, mime_type: 'video/mp4; codecs="avc1"' });
+  const info = { streaming_data: { formats: [progressive], adaptive_formats: [low, high, opus, video] } };
+  assert.equal(selectTvOSFormats(info, { preferVideo: false }).playback, high);
+  const withVideo = selectTvOSFormats(info, { preferVideo: true });
+  assert.equal(withVideo.audio, high); assert.equal(withVideo.video, video);
+  info.streaming_data.adaptive_formats = [low, high];
+  const muxed = selectTvOSFormats(info, { preferVideo: true });
+  assert.equal(muxed.video, progressive); assert.equal(muxed.audio, high);
+  info.streaming_data.adaptive_formats = [];
+  assert.equal(selectTvOSFormats(info, { preferVideo: true }).playback, progressive);
+});
+
+test('Music audio upgrade preserves TV video and falls back when better AAC is unavailable', async () => {
+  const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 128000 });
+  const high = { ...low, bitrate: 256000 };
+  const video = format({ has_video: true, height: 1080, mime_type: 'video/mp4; codecs="avc1"' });
+  const makeInfo = () => ({ streaming_data: { formats: [], adaptive_formats: [low, video] } });
+  const info = makeInfo();
+  assert.equal(await upgradeMusicAudio(info, async () => ({ streaming_data: { adaptive_formats: [high] } })), info);
+  assert.equal(selectTvOSFormats(info, { preferVideo: true }).audio, high);
+  assert.equal(selectTvOSFormats(info, { preferVideo: true }).video, video);
+  let called = false;
+  await upgradeMusicAudio(info, async () => { called = true; }); assert.equal(called, false);
+  for (const fetch of [async () => { throw Error('unavailable'); }, async () => ({}), async () => ({ streaming_data: { adaptive_formats: [{ ...low, bitrate: 48000 }] } })]) {
+    const original = makeInfo(); await upgradeMusicAudio(original, fetch);
+    assert.equal(selectTvOSFormats(original, { preferVideo: false }).playback, low);
+  }
+});

@@ -322,6 +322,9 @@ export class YouTubeMusicService {
       adaptiveAudioUrl,
       mimeType: presentedVideo.mime_type,
       contentLength: presentedVideo.content_length ?? null,
+      audioBitrate: selected.audio ? audioBitrate(selected.audio)
+        : selected.playback.has_video ? null : audioBitrate(selected.playback),
+      audioCodec: String((selected.audio ?? selected.playback).mime_type ?? '').match(/codecs="([^"]+)"/)?.[1] ?? null,
       hasAudio: selected.audio ? true : selected.playback.has_audio,
       hasVideo: presentedVideo.has_video,
       quality: presentedVideo.quality_label
@@ -370,7 +373,7 @@ export class YouTubeMusicService {
           await this.#oauthLibraryService.authorizeSession(playbackClient);
           const info = await playbackClient.getBasicInfo(videoId, { client: 'TV' });
           if (isPlayable(info)) {
-            return info;
+            return await upgradeMusicAudio(info, () => playbackClient.music.getInfo(videoId));
           }
           console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
         } catch (error) {
@@ -579,15 +582,7 @@ export const selectTvOSFormats = (info, { preferVideo, quality = 'best' }) => {
     ...Array.from(streamingData?.adaptive_formats ?? []),
   ];
 
-  const audioFormats = formats
-    .filter((format) => {
-      const mimeType = String(format?.mime_type ?? '').toLowerCase();
-      return format?.has_audio === true &&
-        format?.has_video !== true &&
-        mimeType.startsWith('audio/mp4') &&
-        mimeType.includes('mp4a');
-    })
-    .sort((left, right) => (right.bitrate ?? 0) - (left.bitrate ?? 0));
+  const audioFormats = compatibleAudioFormats(formats);
 
   if (!preferVideo) {
     return { playback: audioFormats[0] ?? null, video: null, audio: null };
@@ -616,15 +611,15 @@ export const selectTvOSFormats = (info, { preferVideo, quality = 'best' }) => {
 
   const progressive = formatForQuality(progressiveFormats, quality);
   const adaptiveVideo = formatForQuality(adaptiveVideoFormats, quality);
-  const shouldUseAdaptive = Boolean(
-    adaptiveVideo &&
-    audioFormats[0] &&
-    (adaptiveVideo.height ?? 0) > (progressive?.height ?? 0),
-  );
+  // Video resolution and audio quality are separate choices. Even a low-resolution
+  // video can use the best AAC track instead of its bundled lower-quality audio.
+  const bestVideo = adaptiveVideo && (adaptiveVideo.height ?? 0) >= (progressive?.height ?? 0)
+    ? adaptiveVideo : progressive;
+  const shouldUseAdaptive = Boolean(bestVideo && audioFormats[0]);
 
   return {
     playback: progressive ?? audioFormats[0] ?? null,
-    video: shouldUseAdaptive ? adaptiveVideo : null,
+    video: shouldUseAdaptive ? bestVideo : null,
     audio: shouldUseAdaptive ? audioFormats[0] : null,
   };
 };
@@ -721,4 +716,27 @@ export const recommendedMix = async (music, videoId) => {
     return media ? [media] : [];
   });
   return { sections: [{ id: 'song-mix', title: 'Song mix', items }] };
+};
+
+const audioBitrate = (format) => Number(format?.average_bitrate ?? format?.bitrate ?? format?.audio_bitrate ?? 0) || 0;
+const compatibleAudioFormats = (formats) => Array.from(formats ?? []).filter((format) => {
+  const mime = String(format?.mime_type ?? '').toLowerCase();
+  return format?.has_audio === true && format?.has_video !== true && mime.startsWith('audio/mp4') && mime.includes('mp4a');
+}).sort((left, right) => audioBitrate(right) - audioBitrate(left));
+
+export const upgradeMusicAudio = async (info, fetchMusicInfo) => {
+  const data = info?.streaming_data;
+  if (!data) return info;
+  const current = compatibleAudioFormats([...(data.formats ?? []), ...(data.adaptive_formats ?? [])])[0];
+  if (audioBitrate(current) >= 256000) return info;
+  try {
+    const musicInfo = await fetchMusicInfo();
+    const musicData = musicInfo?.streaming_data;
+    const audio = compatibleAudioFormats([...(musicData?.formats ?? []), ...(musicData?.adaptive_formats ?? [])])[0];
+    if (audio && audioBitrate(audio) > audioBitrate(current)) {
+      // Keep TV video formats, metadata and methods; only add the improved audio track.
+      data.adaptive_formats = [...(data.adaptive_formats ?? []), audio];
+    }
+  } catch { /* Keep the working authenticated TV stream if Music lookup is unavailable. */ }
+  return info;
 };

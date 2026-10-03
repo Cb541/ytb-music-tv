@@ -166,7 +166,7 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 24) {
-                HStack(spacing: 8) {
+                HStack(spacing: 2) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
@@ -176,7 +176,7 @@ struct MusicPlayerScreen: View {
                             .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "PlayPause", showsBackground: false, horizontalPadding: 16))
+                        highlighted: controlHighlightVisible && focusedControl == "PlayPause", showsBackground: false, horizontalPadding: 4))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
@@ -186,7 +186,7 @@ struct MusicPlayerScreen: View {
                         Task { await viewModel.toggleRepeatOne() }
                     }
                 }
-                .padding(.leading, -55)
+                .padding(.leading, -43)
                 .offset(y: 5)
                 Spacer()
                 HStack(spacing: 4) {
@@ -243,7 +243,7 @@ struct MusicPlayerScreen: View {
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? nil : 16))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? nil : 4))
         .scaleEffect(compact ? 0.9 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)

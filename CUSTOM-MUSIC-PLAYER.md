@@ -260,3 +260,13 @@ The lyric-mode title's rightward offset reduces from six to two points for a ver
 ## Artist and album in the header (v51)
 
 Album metadata moves from below the song title into the top-left clickable heading, formatted Artist • Album. Topic channel suffixes are stripped from each artist for display. Missing albums, explicitly Single-labeled releases, and album names matching the song title display only the artist. The metadata does not include authoritative release type, so title equality is a single-detection heuristic. Song titles retain their existing sizes and offsets; the navigation menu still uses original metadata for lookup. Foundation checks cover album, missing metadata, single labels, title matching and multiple Topic artists.
+
+## Tighter left controls and highest available AAC (v52)
+
+Left-control gaps reduce from eight to two points and horizontal internal padding reduces from sixteen to four points. The group leading inset compensates by twelve points so Shuffle's icon center stays fixed while the other buttons gather toward it. Play/pause retains its 70×52 content dimensions; icon sizes and vertical positions remain.
+
+Audio-only playback still selects the highest-bitrate tvOS-compatible AAC stream. Video playback now uses that same best AAC track independently of video resolution, including equal-resolution video or a progressive MP4 as the video source. The existing AVComposition takes only its video track and combines it with the separate AAC track. A progressive stream remains available for playback fallback.
+
+When authenticated TV playback exposes less than 256 kbps AAC, the resolver also asks the YouTube Music endpoint for the same song and adds its audio track only if it is higher bitrate. TV video formats, metadata and methods remain; failed, empty or lower-quality Music responses retain the existing stream. Available Premium quality depends on account entitlements and upstream responses; no new fidelity is created by re-encoding. API resolve responses now include the selected audioBitrate and audioCodec; unknown muxed audio bitrate is null instead of total video bitrate.
+
+Both v52 scripts are required. Fifty-two Node tests pass, including highest-AAC selection, equal-resolution pairing, progressive video with separate audio, no-audio fallback, Music upgrade and failure/no-downgrade cases. The cumulative client updater is checked across earlier builds. GitHub Actions compiles tvOS; real-device sound quality and exposed Premium formats still need verification.
