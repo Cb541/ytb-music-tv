@@ -146,6 +146,12 @@ enum PlaybackAndLyricsTests {
         headingMedia.artist = "Artist – Topic, Guest - Topic"
         headingMedia.album = "Album"
         precondition(MusicLookup.playerHeading(headingMedia) == "Artist, Guest • Album")
+        let qualityReport = try JSONDecoder().decode(ResolvedStream.self, from: Data(#"{"directUrl":"https://example.com/audio.m4a","audioBitrate":256000}"#.utf8))
+        precondition(qualityReport.audioBitrate == 256000)
+        for report in [#"{"directUrl":"https://example.com/audio.m4a","audioBitrate":null}"#, #"{"directUrl":"https://example.com/audio.m4a"}"#] {
+            let unknownQuality = try JSONDecoder().decode(ResolvedStream.self, from: Data(report.utf8))
+            precondition(unknownQuality.audioBitrate == nil)
+        }
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

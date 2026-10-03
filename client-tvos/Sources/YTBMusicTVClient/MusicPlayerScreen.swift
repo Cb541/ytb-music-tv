@@ -52,17 +52,19 @@ struct MusicPlayerScreen: View {
                     .padding(.leading, -30)
                     .disabled(displayedMedia == nil || viewModel.isSearching)
                     GeometryReader { stage in
+                        let coverSide = lyricsVisible
+                            ? min(geometry.size.height * 0.53, geometry.size.width * 0.36, max(1, stage.size.height - 145))
+                            : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145))
                         HStack(alignment: .center, spacing: 80) {
                             VStack(alignment: lyricsVisible ? .leading : .center, spacing: 34) {
                                 if musicVideoActive {
                                     Spacer(minLength: 0)
                                 } else {
-                                    artwork(side: lyricsVisible
-                                        ? min(geometry.size.height * 0.53, geometry.size.width * 0.36, max(1, stage.size.height - 145))
-                                        : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145)))
+                                    artwork(side: coverSide)
                                         .offset(y: lyricsVisible ? 0 : -8)
                                 }
                                 trackDetails
+                                    .frame(width: lyricsVisible || musicVideoActive ? nil : coverSide)
                             }
                             .frame(maxWidth: .infinity, maxHeight: musicVideoActive ? .infinity : nil, alignment: lyricsVisible ? .leading : .center)
                             .padding(.leading, lyricsVisible ? 40 : 0)
@@ -157,6 +159,7 @@ struct MusicPlayerScreen: View {
                 .font(.system(size: lyricsVisible ? 32 : 34, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
+                .frame(maxWidth: lyricsVisible ? nil : .infinity, alignment: lyricsVisible ? .leading : .center)
                 .offset(x: lyricsVisible ? 2 : 0)
         }
         .multilineTextAlignment(lyricsVisible ? .leading : .center)
@@ -187,7 +190,7 @@ struct MusicPlayerScreen: View {
                     }
                 }
                 .padding(.leading, -43)
-                .offset(y: 5)
+                .offset(y: 11)
                 Spacer()
                 HStack(spacing: 4) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
@@ -219,7 +222,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
                 .padding(.trailing, -37)
-                .offset(y: 13)
+                .offset(y: 19)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
@@ -281,7 +284,21 @@ struct MusicPlayerScreen: View {
                 Button("Done") { closeQueue() }.buttonStyle(.bordered)
                     .focused($queueCloseFocused)
             }
+            Text(viewModel.currentAudioBitrate.map { "Audio: \(($0 + 500) / 1000) kbps" } ?? "Audio bitrate unavailable")
+                .font(.subheadline).foregroundStyle(.white.opacity(0.65))
             HStack(spacing: 24) {
+                Button {
+                    Task { await viewModel.likeCurrent() }
+                } label: {
+                    HStack(spacing: 10) {
+                        if viewModel.isUpdatingRating { ProgressView() }
+                        Label(viewModel.isUpdatingRating ? "Saving…" : viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Liked" : "Like song",
+                              systemImage: viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    }
+                }
+                .buttonStyle(.bordered).tint(assets.accentColor)
+                .disabled(viewModel.isUpdatingRating || viewModel.state?.currentMedia?.videoId == nil)
+                .accessibilityHint(viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Remove this song from your YouTube likes" : "Add this song to your YouTube liked songs")
                 if viewModel.currentStreamHasVideo {
                     Button(videoVisible ? "Hide music video" : "Show music video", systemImage: "video") {
                         videoVisible.toggle(); closeQueue()

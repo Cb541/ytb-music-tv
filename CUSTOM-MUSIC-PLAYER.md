@@ -270,3 +270,27 @@ Audio-only playback still selects the highest-bitrate tvOS-compatible AAC stream
 When authenticated TV playback exposes less than 256 kbps AAC, the resolver also asks the YouTube Music endpoint for the same song and adds its audio track only if it is higher bitrate. TV video formats, metadata and methods remain; failed, empty or lower-quality Music responses retain the existing stream. Available Premium quality depends on account entitlements and upstream responses; no new fidelity is created by re-encoding. API resolve responses now include the selected audioBitrate and audioCodec; unknown muxed audio bitrate is null instead of total video bitrate.
 
 Both v52 scripts are required. Fifty-two Node tests pass, including highest-AAC selection, equal-resolution pairing, progressive video with separate audio, no-audio fallback, Music upgrade and failure/no-downgrade cases. The cumulative client updater is checked across earlier builds. GitHub Actions compiles tvOS; real-device sound quality and exposed Premium formats still need verification.
+
+## Bounded quality checks and stream preparation (v53)
+
+The optional Music audio-quality check is limited to one second. A slow, failed or lower-quality response leaves the already-working TV stream in place; late responses cannot modify the formats after selection. The lookup uses getBasicInfo with the Music client rather than getInfo, avoiding its unnecessary concurrent Up next fetch. Highest-bitrate AAC selection remains.
+
+The client also cancels remote video/audio track loading after ten seconds if AVComposition preparation stalls, allowing existing callers to fall back to the regular stream. This bounds these new waits, not total network playback startup. Fifty-three server tests include a stalled lookup and late-result regression. Real TV startup timing and compilation remain verified through the build/device workflow.
+
+## Longer quality-check budget (v54)
+
+The optional higher-quality Music lookup now has a five-second deadline instead of one second. Fast results return immediately; slower requests have more time to expose improved AAC, while stalled requests still fall back rather than delaying playback for minutes. The v53 client track-loading deadline remains. This change needs only the Docker server update if the v53 IPA is installed.
+
+## Title aligned to its cover (v55)
+
+The artwork and song-title frame share the same coverSide value in both layouts. Short titles and wrapped lines center within the artwork width instead of using lyric mode's leading alignment. The existing two-point lyric offset is retained relative to the cover center, with centered mode exactly centered. Cover positions, sizes, title fonts and vertical spacing remain. Video mode retains its unrestricted title layout.
+
+## Centered-mode alignment, audio readout and lower controls (v56)
+
+The shared artwork-width centering applies only in centered mode. Lyric mode retains leading alignment and its two-point rightward title nudge. Left and right control groups move down six points (offsets eleven and nineteen respectively), preserving horizontal placement and spacing.
+
+Queue displays the current selected audio bitrate in kbps beneath its heading. The client decodes the server's audioBitrate field and updates it on manual playback, crossfade and audio fallback. It does not show total video bitrate as audio quality; unknown bitrate, a regular-stream fallback or failed adaptive preparation displays Audio bitrate unavailable. This is a resolver-reported estimate, not measured throughput; server-side proxy recovery may select another upstream stream without client notification. Foundation checks cover available, null and missing bitrate. The server v54 update already supplies this metadata.
+
+## Like the current song from Queue (v57)
+
+Queue's top action row adds an artwork-tinted Like song button with a thumbs-up symbol. It uses the existing authenticated rating route to set LIKE on YouTube, adding the song to Liked Music. After successful acknowledgement the button shows Liked with a filled thumb; selecting it again removes the like. Saving feedback and temporary disabling prevent repeated submissions. Failed requests retain the previous rating and use the existing error banner. Ratings require the already-configured paired TV and writable Google OAuth session; no new server route is needed. Existing server tests cover authenticated likes, removals, pairing and read-only credential rejection.

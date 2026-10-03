@@ -10,7 +10,8 @@ private typealias ResolvedPlaybackMedia = (
     adaptiveVideoURL: URL?,
     adaptiveAudioURL: URL?,
     hasVideo: Bool,
-    mimeType: String?
+    mimeType: String?,
+    audioBitrate: Int?
 )
 
 private struct NextPlaybackCache {
@@ -50,6 +51,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var isPreparingPlayback = false
     @Published private(set) var pendingMedia: MediaItem?
     @Published var currentStreamHasVideo = false
+    @Published private(set) var currentAudioBitrate: Int?
     @Published private(set) var isUpdatingRating = false
     @Published var errorMessage: String?
 
@@ -776,6 +778,7 @@ final class PlayerViewModel: ObservableObject {
         playbackRequestID = requestID
         invalidateNextPlaybackCache()
         pendingMedia = media
+        currentAudioBitrate = nil
         isPreparingPlayback = true
         errorMessage = nil
         fallbackPlaybackURLs.removeAll()
@@ -819,6 +822,7 @@ final class PlayerViewModel: ObservableObject {
             playbackTimeMs = 0
             playbackDurationMs = max(0, resolved.media.durationMs)
             currentStreamHasVideo = resolved.hasVideo
+            currentAudioBitrate = resolved.adaptiveAudioURL != nil && preparedItem == nil ? nil : resolved.audioBitrate
             state = PlayerState(
                 status: "playing",
                 currentTimeMs: 0,
@@ -876,14 +880,15 @@ final class PlayerViewModel: ObservableObject {
                 adaptiveURLs?.video,
                 adaptiveURLs?.audio,
                 config?.playback.preferVideo == true && resolved.hasVideo == true,
-                resolved.mimeType
+                resolved.mimeType,
+                resolved.audioBitrate
             )
         }
 
         if let playbackURL = media.streamUrl ?? media.playbackUrl {
             var playable = media
             playable.playbackUrl = playbackURL
-            return (playable, playbackURL, nil, nil, nil, config?.playback.preferVideo == true, nil)
+            return (playable, playbackURL, nil, nil, nil, config?.playback.preferVideo == true, nil, nil)
         }
 
         throw PlaybackError.notPlayable
@@ -906,6 +911,15 @@ final class PlayerViewModel: ObservableObject {
     private func makeAdaptivePlayerItem(videoURL: URL, audioURL: URL) async throws -> AVPlayerItem {
         let videoAsset = AVURLAsset(url: videoURL)
         let audioAsset = AVURLAsset(url: audioURL)
+        // Remote MP4 track loading can stall. Cancel both loads and let the caller
+        // fall back to the working stream rather than leave playback spinning.
+        let loadDeadline = Task { @MainActor in
+            do { try await Task.sleep(nanoseconds: 10_000_000_000) } catch { return }
+            guard !Task.isCancelled else { return }
+            videoAsset.cancelLoading()
+            audioAsset.cancelLoading()
+        }
+        defer { loadDeadline.cancel() }
         async let videoTracks = videoAsset.loadTracks(withMediaType: .video)
         async let audioTracks = audioAsset.loadTracks(withMediaType: .audio)
         guard let videoTrack = try await videoTracks.first,
@@ -1058,6 +1072,7 @@ final class PlayerViewModel: ObservableObject {
     private func retryFallbackPlayback(failedItem: AVPlayerItem) -> Bool {
         guard player.currentItem === failedItem, !fallbackPlaybackURLs.isEmpty else { return false }
         let fallbackPlaybackURL = fallbackPlaybackURLs.removeFirst()
+        currentAudioBitrate = nil
         isPreparingPlayback = true
         replacePlayerItem(url: fallbackPlaybackURL)
         return true
@@ -1093,6 +1108,7 @@ final class PlayerViewModel: ObservableObject {
                 }
 
                 self.currentStreamHasVideo = false
+                self.currentAudioBitrate = resolved.audioBitrate
                 self.configurePlayer(
                     url: playbackURLs.primary,
                     fallbackURLs: playbackURLs.fallback.map { [$0] } ?? []
@@ -1492,6 +1508,7 @@ final class PlayerViewModel: ObservableObject {
         playbackTimeMs = incomingTime.isFinite ? max(0, Int(incomingTime * 1000)) : 0
         playbackDurationMs = resolved.media.durationMs
         currentStreamHasVideo = resolved.hasVideo
+        currentAudioBitrate = resolved.audioBitrate
         state = PlayerState(status: "playing", currentTimeMs: playbackTimeMs,
             currentMediaId: resolved.media.id, currentMedia: resolved.media, queue: queue,
             shuffle: oldState?.shuffle ?? false, repeatMode: oldState?.repeatMode ?? "off")

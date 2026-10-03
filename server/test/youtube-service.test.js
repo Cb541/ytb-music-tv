@@ -159,3 +159,18 @@ test('Music audio upgrade preserves TV video and falls back when better AAC is u
     assert.equal(selectTvOSFormats(original, { preferVideo: false }).playback, low);
   }
 });
+
+test('slow Music quality lookup returns the working stream within its deadline and ignores late results', async () => {
+  const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 128000 });
+  const high = { ...low, bitrate: 256000 };
+  const info = { streaming_data: { adaptive_formats: [low] } };
+  let finish;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const began = Date.now();
+  assert.equal(await upgradeMusicAudio(info, () => pending, { timeoutMs: 20 }), info);
+  assert.ok(Date.now() - began < 1000, 'working audio must not wait for a stalled lookup');
+  assert.equal(selectTvOSFormats(info, { preferVideo: false }).playback, low);
+  finish({ streaming_data: { adaptive_formats: [high] } });
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(selectTvOSFormats(info, { preferVideo: false }).playback, low);
+});

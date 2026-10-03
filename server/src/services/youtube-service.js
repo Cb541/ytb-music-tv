@@ -373,7 +373,7 @@ export class YouTubeMusicService {
           await this.#oauthLibraryService.authorizeSession(playbackClient);
           const info = await playbackClient.getBasicInfo(videoId, { client: 'TV' });
           if (isPlayable(info)) {
-            return await upgradeMusicAudio(info, () => playbackClient.music.getInfo(videoId));
+            return await upgradeMusicAudio(info, () => playbackClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
           }
           console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
         } catch (error) {
@@ -724,13 +724,17 @@ const compatibleAudioFormats = (formats) => Array.from(formats ?? []).filter((fo
   return format?.has_audio === true && format?.has_video !== true && mime.startsWith('audio/mp4') && mime.includes('mp4a');
 }).sort((left, right) => audioBitrate(right) - audioBitrate(left));
 
-export const upgradeMusicAudio = async (info, fetchMusicInfo) => {
+export const upgradeMusicAudio = async (info, fetchMusicInfo, { timeoutMs = 5000 } = {}) => {
   const data = info?.streaming_data;
   if (!data) return info;
   const current = compatibleAudioFormats([...(data.formats ?? []), ...(data.adaptive_formats ?? [])])[0];
   if (audioBitrate(current) >= 256000) return info;
+  let deadline;
   try {
-    const musicInfo = await fetchMusicInfo();
+    const musicInfo = await Promise.race([
+      Promise.resolve().then(fetchMusicInfo),
+      new Promise((resolve) => { deadline = setTimeout(() => resolve(null), timeoutMs); }),
+    ]);
     const musicData = musicInfo?.streaming_data;
     const audio = compatibleAudioFormats([...(musicData?.formats ?? []), ...(musicData?.adaptive_formats ?? [])])[0];
     if (audio && audioBitrate(audio) > audioBitrate(current)) {
@@ -738,5 +742,6 @@ export const upgradeMusicAudio = async (info, fetchMusicInfo) => {
       data.adaptive_formats = [...(data.adaptive_formats ?? []), audio];
     }
   } catch { /* Keep the working authenticated TV stream if Music lookup is unavailable. */ }
+  finally { clearTimeout(deadline); }
   return info;
 };

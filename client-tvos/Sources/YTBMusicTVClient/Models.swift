@@ -114,6 +114,7 @@ struct ResolvedStream: Codable, Equatable {
     var hasAudio: Bool?
     var hasVideo: Bool?
     var quality: String?
+    var audioBitrate: Int?
     var expiresAt: String?
     var proxyUrl: URL?
     var adaptiveVideoUrl: URL?
@@ -173,7 +174,7 @@ extension MediaItem {
 
 extension ResolvedStream {
     enum CodingKeys: String, CodingKey {
-        case videoId, directUrl, mimeType, hasAudio, hasVideo, quality, expiresAt, proxyUrl
+        case videoId, directUrl, mimeType, hasAudio, hasVideo, quality, audioBitrate, expiresAt, proxyUrl
         case adaptiveVideoUrl, adaptiveAudioUrl, adaptiveVideoProxyUrl, adaptiveAudioProxyUrl, media
     }
 
@@ -190,6 +191,8 @@ extension ResolvedStream {
         hasAudio = try? c.decode(Bool.self, forKey: .hasAudio)
         hasVideo = try? c.decode(Bool.self, forKey: .hasVideo)
         quality = try? c.decode(String.self, forKey: .quality)
+        let bitrate = c.tolerantInt(forKey: .audioBitrate)
+        audioBitrate = bitrate > 0 ? bitrate : nil
         expiresAt = try? c.decode(String.self, forKey: .expiresAt)
         adaptiveVideoUrl = c.tolerantURL(forKey: .adaptiveVideoUrl)
         adaptiveAudioUrl = c.tolerantURL(forKey: .adaptiveAudioUrl)
