@@ -294,3 +294,7 @@ Queue displays the current selected audio bitrate in kbps beneath its heading. T
 ## Like the current song from Queue (v57)
 
 Queue's top action row adds an artwork-tinted Like song button with a thumbs-up symbol. It uses the existing authenticated rating route to set LIKE on YouTube, adding the song to Liked Music. After successful acknowledgement the button shows Liked with a filled thumb; selecting it again removes the like. Saving feedback and temporary disabling prevent repeated submissions. Failed requests retain the previous rating and use the existing error banner. Ratings require the already-configured paired TV and writable Google OAuth session; no new server route is needed. Existing server tests cover authenticated likes, removals, pairing and read-only credential rejection.
+
+## Approved midnight-blue app icon (v58)
+
+The Apple TV home-screen icon uses the approved dark navy circle on an OLED-black background, with the rounded white screen box and a single upright music note. The box and note sit higher in the circle; the stem is wider with the final shortened length. Small and large catalog layers, the square master, and the top-shelf image use the same approved raster, exported without stretching. Both icon backdrops are black. Catalog dimensions and asset names remain compatible with the existing build. No server update is required.
