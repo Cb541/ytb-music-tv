@@ -73,6 +73,7 @@ final class PlayerViewModel: ObservableObject {
     private var timeObserver: Any?
     private var timeObserverPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
+    private var completedPlaybackItem: AVPlayerItem?
     private var timeControlObserver: NSKeyValueObservation?
     private var itemStatusObserver: NSKeyValueObservation?
     private var fallbackPlaybackURLs: [URL] = []
@@ -977,6 +978,7 @@ final class PlayerViewModel: ObservableObject {
         cancelCrossfade()
         removePlaybackTimeObserver()
         player.pause()
+        completedPlaybackItem = nil
         refreshPlaybackTiming(for: item)
         player.replaceCurrentItem(with: item)
         installStatusObserver(for: item)
@@ -1013,12 +1015,14 @@ final class PlayerViewModel: ObservableObject {
         timeObserverPlayer = nil
     }
 
-    private func refreshPlaybackTiming(for item: AVPlayerItem) {
+    @discardableResult
+    private func refreshPlaybackTiming(for item: AVPlayerItem) -> PlaybackTiming {
         let timing = PlaybackTiming.resolve(metadataMs: state?.currentMedia?.durationMs ?? 0,
             streamSeconds: CMTimeGetSeconds(item.duration), hasVideo: currentStreamHasVideo)
         if playbackDurationMs != timing.durationMs { playbackDurationMs = timing.durationMs }
         let end = timing.endTimeMs.map { CMTime(value: Int64($0), timescale: 1000) } ?? .invalid
         if item.forwardPlaybackEndTime != end { item.forwardPlaybackEndTime = end }
+        return timing
     }
 
     private func installTimeObserverIfNeeded() {
@@ -1039,7 +1043,20 @@ final class PlayerViewModel: ObservableObject {
                 let currentMs = max(0, Int(seconds * 1000))
                 self.playbackTimeMs = currentMs
 
-                if let item = self.player.currentItem { self.refreshPlaybackTiming(for: item) }
+                if let item = self.player.currentItem {
+                    let timing = self.refreshPlaybackTiming(for: item)
+                    // Re-arm after a repeat or manual seek actually returns to
+                    // an earlier position, not while an old end callback is queued.
+                    if self.completedPlaybackItem === item && currentMs < max(0, timing.durationMs - 500) {
+                        self.completedPlaybackItem = nil
+                    }
+                    if let end = timing.endTimeMs, currentMs >= max(0, end - 1),
+                       self.state?.status == "playing", self.pendingMedia == nil, self.crossfadeTask == nil {
+                        self.player.pause()
+                        await self.finishPlayback(for: item)
+                        return
+                    }
+                }
                 self.maybeBeginCrossfade()
                 if currentMs / 1000 != previousSecond { self.updateNowPlayingInfo() }
             }
@@ -1056,10 +1073,17 @@ final class PlayerViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.player.currentItem === item, self.crossfadeTask == nil else { return }
-                await self.next()
+                guard let self else { return }
+                await self.finishPlayback(for: item)
             }
         }
+    }
+
+    private func finishPlayback(for item: AVPlayerItem) async {
+        guard player.currentItem === item, crossfadeTask == nil, pendingMedia == nil,
+              state?.status == "playing", completedPlaybackItem !== item else { return }
+        completedPlaybackItem = item
+        await next()
     }
 
     private func installStatusObserver(for item: AVPlayerItem) {
@@ -1522,6 +1546,7 @@ final class PlayerViewModel: ObservableObject {
         var queue = oldState?.queue ?? []
         if let index = queue.firstIndex(where: { $0.id == resolved.media.id }) { queue[index] = resolved.media }
         player = incoming
+        completedPlaybackItem = nil
         standbyPlayer = nil
         fadingOutPlayer = outgoing
         playbackRequestID = UUID()
@@ -1668,7 +1693,7 @@ private func merge(_ original: MediaItem, with resolved: MediaItem?) -> MediaIte
     resolved.album = resolved.album ?? original.album
     resolved.artistBrowseId = original.artistBrowseId ?? resolved.artistBrowseId
     resolved.albumBrowseId = original.albumBrowseId ?? resolved.albumBrowseId
-    resolved.durationMs = resolved.durationMs > 0 ? resolved.durationMs : original.durationMs
+    resolved.durationMs = PlaybackTiming.metadataDuration(originalMs: original.durationMs, resolvedMs: resolved.durationMs)
     resolved.artworkUrl = resolved.artworkUrl ?? original.artworkUrl
     resolved.sourceUrl = resolved.sourceUrl ?? original.sourceUrl
     resolved.tags = resolved.tags.isEmpty ? original.tags : resolved.tags

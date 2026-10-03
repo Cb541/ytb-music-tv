@@ -221,18 +221,30 @@ struct PlaybackTiming: Equatable {
     var durationMs: Int
     var endTimeMs: Int?
 
+    static func metadataDuration(originalMs: Int, resolvedMs: Int) -> Int {
+        guard originalMs > 0 else { return max(0, resolvedMs) }
+        guard resolvedMs > 0 else { return originalMs }
+        // Do not overwrite a known library/song length with the same inflated
+        // duration that the playback response and container both report.
+        return isInflated(metadata: originalMs, stream: resolvedMs) ? originalMs : resolvedMs
+    }
+
+    private static func isInflated(metadata: Int, stream: Int) -> Bool {
+        metadata > 0 && stream > metadata &&
+            Double(stream - metadata) >= max(10_000, Double(metadata) * 0.5)
+    }
+
     static func resolve(metadataMs: Int, streamSeconds: Double, hasVideo: Bool) -> PlaybackTiming {
         let metadata = max(0, metadataMs)
         let milliseconds = streamSeconds * 1000
         let stream = milliseconds.isFinite && milliseconds > 0 && milliseconds < Double(Int.max)
             ? Int(milliseconds) : 0
         guard metadata > 0 else { return PlaybackTiming(durationMs: stream, endTimeMs: nil) }
-        // Some AAC streams expose an inflated container timeline with a silent
-        // tail. Use the song metadata only for a clearly oversized audio timeline.
-        // Small encoder differences and the actual length of videos remain intact.
-        let inflatedAudio = !hasVideo && stream > metadata &&
-            Double(stream - metadata) >= max(10_000, Double(metadata) * 0.5)
-        if inflatedAudio || (!hasVideo && stream == 0) {
+        // A video-capable stream can still carry a padded music timeline behind
+        // album art. A known recording length, rather than the video flag, decides
+        // whether a clearly oversized timeline should end at the song boundary.
+        let inflatedTimeline = isInflated(metadata: metadata, stream: stream)
+        if inflatedTimeline || (!hasVideo && stream == 0) {
             return PlaybackTiming(durationMs: metadata, endTimeMs: metadata)
         }
         return PlaybackTiming(durationMs: stream > 0 ? stream : metadata, endTimeMs: nil)

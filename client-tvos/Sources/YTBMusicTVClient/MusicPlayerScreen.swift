@@ -214,7 +214,7 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 // The trailing Crossfade menu anchors this row. Compact the
                 // preceding buttons toward it without changing that anchor.
-                HStack(spacing: 0) {
+                HStack(spacing: 2) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -231,13 +231,13 @@ struct MusicPlayerScreen: View {
                         highlighted: controlHighlightVisible && focusedControl == "Crossfade", showsBackground: false))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
                     .fixedSize(horizontal: true, vertical: false)
-                    .scaleEffect(0.9)
+                    .scaleEffect(0.88)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
                     .accessibilityLabel("Crossfade duration")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
                 .padding(.trailing, -37)
-                .offset(y: 19)
+                .offset(y: 23)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
@@ -262,7 +262,7 @@ struct MusicPlayerScreen: View {
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
             backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 2 : 4))
-        .scaleEffect(compact ? 0.9 : 1)
+        .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)

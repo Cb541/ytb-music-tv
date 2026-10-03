@@ -364,3 +364,13 @@ Start song mix moves from the right playback-control row to the top-left artist/
 The right row now contains Lyrics, Queue and Crossfade. Its spacing is zero and Lyrics/Queue use two points of horizontal padding per side instead of eight, bringing their icons toward Crossfade without changing glyph size. Crossfade remains the final trailing item with its existing width, scale, trailing padding and vertical offset, so its position is preserved as the row becomes narrower. Left controls and all other player layout remain unchanged.
 
 All Swift sources pass syntax parsing. This small UI adjustment adds no new model tests; the full tvOS SDK build runs through the updater, and spacing/focus and menu actions require verification on Apple TV. The cumulative client-only updater includes the preceding Search, artwork and duration fixes. No server update is needed.
+
+## v66: slight right-control adjustment and stronger song-end timing
+
+The right row moves down four points (offset 23), uses two-point spacing, and scales its icons from 0.90 to 0.88. Glyphs are slightly smaller while focus styling, hit frames and the Mix menu placement remain.
+
+The previous duration guard skipped streams marked as video. It now bounds any clearly inflated stream timeline against the known recording duration, including video-capable playback behind album art. Merging a playback response also preserves the existing song duration when the response itself is at least 50% and ten seconds too long; normal padding, shorter recordings and absent metadata retain the existing safe fallbacks. A genuinely long recording with matching metadata is not halved.
+
+A periodic end check complements AVPlayerItem.forwardPlaybackEndTime and the natural end notification. Both completion paths share a per-item guard, preventing duplicate next-song requests. Repeat/seek re-arms completion after playback actually moves below the end; replacement and crossfade promotion clear the old completion marker. Outstanding track changes and active crossfades prevent the old item from advancing the queue again. Metadata-based detection cannot infer the true length when every supplied duration is wrong or missing.
+
+Foundation regressions cover video-capable inflated timelines, genuine long videos, inflated resolved metadata, encoder padding, shorter streams, missing/negative metadata and prior playback/lyrics checks. Full Swift tests and tvOS compilation are run in GitHub Actions for this client-only change; device playback still requires the new IPA. No server update is needed.
