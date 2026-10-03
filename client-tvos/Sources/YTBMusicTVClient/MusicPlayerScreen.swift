@@ -9,6 +9,7 @@ struct MusicPlayerScreen: View {
     @State private var queueQuery = ""
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @StateObject private var assets = MusicPresentationAssets()
     @AppStorage("YTBMusicTV.musicLyricsVisible") private var lyricsVisible = false
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
@@ -20,6 +21,7 @@ struct MusicPlayerScreen: View {
     @State private var scrubbing = false
     @FocusState private var focusedControl: String?
     @State private var controlHighlightVisible = true
+    @State private var controlsVisible = true
     @State private var controlActivityRevision = 0
 
     private var displayedMedia: MediaItem? { viewModel.pendingMedia ?? viewModel.state?.currentMedia }
@@ -90,7 +92,7 @@ struct MusicPlayerScreen: View {
                             .padding(.leading, lyricsVisible ? 40 : 0)
                             .offset(y: musicVideoActive ? 0 : (lyricsVisible ? 24 : 19))
                             if lyricsVisible {
-                                MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics)
+                                MusicLyricsPane(assets: assets, progress: viewModel.playbackProgress, seek: viewModel.seek, onClose: closeLyrics, onActivity: noteControlActivity)
                                     .frame(width: geometry.size.width * 0.43, height: geometry.size.height * 0.64)
                                     .transition(.opacity.combined(with: .move(edge: .trailing)))
                             }
@@ -123,14 +125,26 @@ struct MusicPlayerScreen: View {
             await assets.load(viewModel.state?.currentMedia, animated: motionArtwork && !reduceMotion)
         }
         .onAppear { focusedControl = "PlayPause"; noteControlActivity() }
-        .onChange(of: focusedControl) { noteControlActivity() }
+        .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }
+        .onChange(of: scrubbing) { noteControlActivity() }
+        .onChange(of: showingQueue) { noteControlActivity() }
+        .onChange(of: viewModel.isPreparingPlayback) { noteControlActivity() }
+        .onChange(of: viewModel.state?.status) { noteControlActivity() }
+        .onChange(of: voiceOverEnabled) { noteControlActivity() }
+        .onChange(of: scenePhase) { if scenePhase == .active { noteControlActivity() } }
+        .simultaneousGesture(TapGesture().onEnded(noteControlActivity))
         .onChange(of: crossfadeSeconds) { noteControlActivity() }
         .onMoveCommand { _ in noteControlActivity() }
         .task(id: controlActivityRevision) {
             do { try await Task.sleep(for: .seconds(2)) }
             catch { return }
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { controlHighlightVisible = false }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { controlHighlightVisible = false }
+            do { try await Task.sleep(for: .seconds(6)) }
+            catch { return }
+            guard !Task.isCancelled, !scrubbing, !showingQueue, !viewModel.isPreparingPlayback,
+                  displayedMedia != nil, scenePhase == .active, !voiceOverEnabled else { return }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) { controlsVisible = false }
         }
         .onPlayPauseCommand { noteControlActivity(); Task { await viewModel.togglePlayPause() } }
         .onExitCommand {
@@ -199,7 +213,7 @@ struct MusicPlayerScreen: View {
                             .font(.system(size: 32, weight: .semibold)).frame(width: 70, height: 52)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "PlayPause", showsBackground: false, horizontalPadding: 4))
+                        highlighted: controlHighlightVisible && focusedControl == "PlayPause", isVisible: controlsVisible, showsBackground: false, horizontalPadding: 4))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
@@ -228,7 +242,7 @@ struct MusicPlayerScreen: View {
                             .frame(width: 48, height: 44)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "Crossfade", showsBackground: false))
+                        highlighted: controlHighlightVisible && focusedControl == "Crossfade", isVisible: controlsVisible, showsBackground: false))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
                     .fixedSize(horizontal: true, vertical: false)
                     .scaleEffect(0.88)
@@ -241,7 +255,7 @@ struct MusicPlayerScreen: View {
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
-                                onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false)
+                                onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false, visualsVisible: controlsVisible)
                 .padding(.horizontal, -60)
         }
     }
@@ -260,7 +274,7 @@ struct MusicPlayerScreen: View {
             .frame(width: 48, height: 44)
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-            highlighted: controlHighlightVisible && focusedControl == label,
+            highlighted: controlHighlightVisible && focusedControl == label, isVisible: controlsVisible,
             backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 2 : 4))
         .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
@@ -281,7 +295,10 @@ struct MusicPlayerScreen: View {
     }
 
     private func noteControlActivity() {
-        controlHighlightVisible = true
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
+            controlsVisible = true
+            controlHighlightVisible = true
+        }
         controlActivityRevision &+= 1
     }
 
@@ -351,6 +368,7 @@ private struct MusicLyricsPane: View {
     @ObservedObject var progress: PlaybackProgress
     let seek: (Int) -> Void
     let onClose: () -> Void
+    var onActivity: () -> Void = {}
     @State private var browseRevision = 0
     @State private var followPlayback = true
     @FocusState private var focusedLine: Int?
@@ -363,7 +381,7 @@ private struct MusicLyricsPane: View {
                     .font(.system(size: 17, weight: .semibold)).tracking(3).foregroundStyle(.white.opacity(0.5))
                 Spacer()
                 if !followPlayback && assets.lyrics.synchronized {
-                    Button("Follow song") { resumeFollowing() }.buttonStyle(.bordered).tint(assets.accentColor)
+                    Button("Follow song") { onActivity(); resumeFollowing() }.buttonStyle(.bordered).tint(assets.accentColor)
                 }
             }
             if assets.lyricsLoading {
@@ -379,6 +397,7 @@ private struct MusicLyricsPane: View {
                                 let isActive = assets.lyrics.synchronized && line.id == activeLine
                                 let isPast = assets.lyrics.synchronized && activeLine.map { line.id < $0 } == true
                                 Button {
+                                    onActivity()
                                     if let time = line.time { seek(Int(time * 1000)); resumeFollowing() }
                                 } label: {
                                     lyricText(line, active: isActive)
@@ -403,6 +422,7 @@ private struct MusicLyricsPane: View {
                     }
                     .scrollIndicators(.hidden)
                     .onMoveCommand { direction in
+                        onActivity()
                         if direction == .left { onClose() }
                         else if direction == .up || direction == .down { browseLyrics() }
                     }
@@ -488,10 +508,11 @@ private struct MusicAmbientBackground: View {
     }
 }
 
-// Focus remains on the button; only its visible emphasis sleeps after inactivity.
+// Fade the drawing inside the button style, retaining the button and focus frame.
 private struct MusicControlButtonStyle: ButtonStyle {
     let accent: Color
     let highlighted: Bool
+    var isVisible = true
     var backgroundOpacity = 0.08
     var showsBackground = true
     var horizontalPadding: CGFloat? = nil
@@ -507,6 +528,7 @@ private struct MusicControlButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.97 : highlighted ? (showsBackground ? 1.04 : 1.10) : 1)
             .animation(.easeOut(duration: 0.2), value: highlighted)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+            .opacity(isVisible ? 1 : 0)
     }
 }
 

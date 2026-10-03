@@ -1523,6 +1523,7 @@ struct PlayerProgressStrip: View {
     var seek: (Int) -> Void
     var accentColor: Color = .red
     var showsBackground = true
+    var visualsVisible = true
 
     var body: some View {
         ProgressStrip(
@@ -1533,7 +1534,8 @@ struct PlayerProgressStrip: View {
             onActivity: onActivity,
             seek: seek,
             accentColor: accentColor,
-            showsBackground: showsBackground
+            showsBackground: showsBackground,
+            visualsVisible: visualsVisible
         )
     }
 }
@@ -1703,6 +1705,7 @@ private struct ProgressStrip: View {
     var seek: (Int) -> Void
     var accentColor: Color = .red
     var showsBackground = true
+    var visualsVisible = true
 
     @State private var scrubMs = 0
     @State private var scrubRunDirection: ScrubDirection?
@@ -1719,8 +1722,9 @@ private struct ProgressStrip: View {
             .focusEffectDisabled()
             .disabled(durationMs <= 0)
             .focused($focused)
-            .onMoveCommand(perform: handleScrubMove)
+            .onMoveCommand { direction in onActivity(); handleScrubMove(direction) }
             .onChange(of: focused) {
+                if focused { onActivity() }
                 if !focused && !scrubbing {
                     stopScrubHold()
                 }
@@ -1753,7 +1757,7 @@ private struct ProgressStrip: View {
     @ViewBuilder
     private var progressControl: some View {
         Button(action: handleButtonSelect) {
-            progressLabel
+            progressLabel.opacity(visualsVisible ? 1 : 0)
         }
         .overlay {
             #if os(tvOS)
