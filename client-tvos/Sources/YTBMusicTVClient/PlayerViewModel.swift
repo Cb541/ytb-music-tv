@@ -102,6 +102,7 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var searchPageTitle: String?
     private var homePlaylistHistory: [MediaItem?] = []
     private var searchPlaylistHistory: [MediaItem?] = []
+    private var searchTitleHistory: [String?] = []
     private var homeNavigationHistory: [[MediaSection]] = []
     private var searchNavigationHistory: [[MediaSection]] = []
     private var knownRatings: [String: String] = [:]
@@ -265,7 +266,7 @@ final class PlayerViewModel: ObservableObject {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !trimmedQuery.isEmpty else {
             searchSections = []
-            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
+            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchTitleHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             isSearching = false
             return
         }
@@ -280,7 +281,7 @@ final class PlayerViewModel: ObservableObject {
             let sections = try await client.search(query: trimmedQuery, type: type).sections
             guard revision == searchRevision else { return }
             searchSections = applyingKnownRatings(to: sections)
-            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
+            searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchTitleHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             errorMessage = nil
         } catch {
             guard revision == searchRevision else { return }
@@ -304,7 +305,7 @@ final class PlayerViewModel: ObservableObject {
         do {
             let response = try await client.browseRelated(media: media, kind: kind)
             guard revision == searchRevision else { return false }
-            if !searchSections.isEmpty { searchNavigationHistory.append(searchSections); searchPlaylistHistory.append(searchPlaylist) }
+            if !searchSections.isEmpty { searchNavigationHistory.append(searchSections); searchPlaylistHistory.append(searchPlaylist); searchTitleHistory.append(searchPageTitle) }
             searchPlaylist = nil
             searchPageTitle = response.title
             searchSections = applyingKnownRatings(to: response.sections)
@@ -509,6 +510,7 @@ final class PlayerViewModel: ObservableObject {
             if !append && !searchSections.isEmpty {
                 searchNavigationHistory.append(searchSections)
                 searchPlaylistHistory.append(searchPlaylist)
+                searchTitleHistory.append(searchPageTitle)
             }
             if !append { searchPlaylist = (media.type == "playlist" || media.playlistId != nil) ? media : nil; searchPageTitle = media.title }
             searchSections = append ? mergeBrowseSections(searchSections, sections) : sections
@@ -696,7 +698,7 @@ final class PlayerViewModel: ObservableObject {
         guard let previous = searchNavigationHistory.popLast() else { return false }
         searchSections = previous
         searchPlaylist = searchPlaylistHistory.popLast() ?? nil
-        searchPageTitle = nil
+        searchPageTitle = searchTitleHistory.popLast() ?? nil
         return true
     }
 
@@ -1641,6 +1643,8 @@ private func merge(_ original: MediaItem, with resolved: MediaItem?) -> MediaIte
     resolved.title = resolved.title.isEmpty ? original.title : resolved.title
     resolved.artist = resolved.artist.isEmpty ? original.artist : resolved.artist
     resolved.album = resolved.album ?? original.album
+    resolved.artistBrowseId = original.artistBrowseId ?? resolved.artistBrowseId
+    resolved.albumBrowseId = original.albumBrowseId ?? resolved.albumBrowseId
     resolved.durationMs = resolved.durationMs > 0 ? resolved.durationMs : original.durationMs
     resolved.artworkUrl = resolved.artworkUrl ?? original.artworkUrl
     resolved.sourceUrl = resolved.sourceUrl ?? original.sourceUrl

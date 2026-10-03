@@ -47,20 +47,27 @@ final class MusicPresentationAssets: ObservableObject {
             lyrics = cached; lyricsLoading = false
             return
         }
-        // Display line lyrics as soon as they arrive, then upgrade to real word
-        // timestamps without keeping the pane blocked by a slower provider.
-        async let rich = MusicLookup.lyricsPlus(for: media)
-        let base: MusicLyrics
-        if let cached = lyricsCache[media.id] { base = cached }
-        else { base = await MusicLookup.lrclibLyrics(for: media) }
-        guard !Task.isCancelled, generation == token else { return }
-        lyrics = base; lyricsLoading = false
-        let words = await rich
-        guard !Task.isCancelled, generation == token else { return }
-        let result = words.wordSynchronized || (!base.synchronized && !words.lines.isEmpty) ? words : base
-        if lyricsCache.count > 50 { lyricsCache.removeAll() }
-        lyricsCache[media.id] = result
-        lyrics = result
+        let cached = lyricsCache[media.id]
+        if let cached { lyrics = cached; lyricsLoading = false }
+        // Publish the first usable result; a slow base provider must not hold
+        // back word timings already returned by a richer provider.
+        await withTaskGroup(of: MusicLyrics.self) { group in
+            group.addTask { await MusicLookup.lyricsPlus(for: media) }
+            if cached == nil { group.addTask { await MusicLookup.lrclibLyrics(for: media) } }
+            var best = cached ?? MusicLyrics()
+            for await result in group {
+                guard !Task.isCancelled, generation == token else { group.cancelAll(); return }
+                if result.wordSynchronized || (result.synchronized && !best.synchronized) || (best.lines.isEmpty && (!result.lines.isEmpty || result.instrumental)) {
+                    best = result
+                    lyrics = best; lyricsLoading = false
+                }
+                if best.wordSynchronized { group.cancelAll(); break }
+            }
+            guard !Task.isCancelled, generation == token else { return }
+            if lyricsCache.count > 50 { lyricsCache.removeAll() }
+            if !best.lines.isEmpty || best.instrumental { lyricsCache[media.id] = best }
+            lyrics = best; lyricsLoading = false
+        }
     }
 
     private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {

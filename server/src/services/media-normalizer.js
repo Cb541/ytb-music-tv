@@ -5,13 +5,14 @@ export const normalizeMediaNode = (node, fallback = {}) => {
 
   const itemType = node.item_type ?? fallback.itemType ?? 'unknown';
   const browsable = ['playlist', 'album', 'artist'].includes(itemType);
-  const videoId = !browsable && node.id && isLikelyVideoId(node.id) ? node.id : undefined;
+  const candidateVideoId = node.video_id ?? node.id ?? node.endpoint?.payload?.videoId ?? node.endpoint?.payload?.watchEndpoint?.videoId;
+  const videoId = !browsable && isLikelyVideoId(candidateVideoId) ? candidateVideoId : undefined;
   const title = textOf(node.title) || node.name || fallback.title || 'Untitled';
   const artists = node.artists ?? (node.author ? [node.author] : node.authors ?? []);
-  const artist = artists.map((entry) => entry?.name).filter(Boolean).join(', ');
+  const artist = artists.map((entry) => typeof entry === 'string' ? entry : entry?.name).filter(Boolean).join(', ');
   const album = node.album?.name ?? fallback.album ?? null;
   const durationMs = node.duration?.seconds ? node.duration.seconds * 1000 : 0;
-  const artworkUrl = bestThumbnailUrl(node.thumbnails ?? node.thumbnail);
+  const artworkUrl = bestThumbnailUrl(node.thumbnails ?? node.thumbnail) ?? fallback.artworkUrl ?? null;
   const endpointBrowse = endpointBrowseId(node.endpoint);
   const endpointPlaylist = endpointPlaylistId(node.endpoint);
   const nodeBrowseId = node.id && (browsable || !isLikelyVideoId(node.id)) ? node.id : null;
@@ -31,14 +32,14 @@ export const normalizeMediaNode = (node, fallback = {}) => {
     title: String(title),
     artist: artist || fallback.artist || '',
     album,
-    artistBrowseId: artists.find((entry) => entry?.channel_id || entry?.id)?.channel_id ?? artists.find((entry) => entry?.id)?.id ?? null,
-    albumBrowseId: node.album?.id ?? endpointBrowseId(node.album?.endpoint),
+    artistBrowseId: artists.find((entry) => entry?.channel_id || entry?.id)?.channel_id ?? artists.find((entry) => entry?.id)?.id ?? fallback.artistBrowseId ?? null,
+    albumBrowseId: node.album?.id ?? endpointBrowseId(node.album?.endpoint) ?? fallback.albumBrowseId ?? null,
     durationMs,
     artworkUrl,
     streamUrl: null,
     sourceUrl: videoId ? `https://music.youtube.com/watch?v=${videoId}` : null,
     likeStatus: 'INDIFFERENT',
-    tags: artists.map((entry) => entry?.name).filter(Boolean),
+    tags: artists.map((entry) => typeof entry === 'string' ? entry : entry?.name).filter(Boolean),
   };
 };
 
@@ -104,10 +105,18 @@ const textOf = (value) => {
   return '';
 };
 
-const bestThumbnailUrl = (thumbnails) => {
-  const list = Array.isArray(thumbnails)
-    ? thumbnails
-    : thumbnails?.contents ?? thumbnails?.thumbnails ?? [];
+export const bestThumbnailUrl = (thumbnails) => {
+  const list = [];
+  const visit = (value, depth = 0) => {
+    if (!value || depth > 8) return;
+    if (Array.isArray(value)) { value.forEach((item) => visit(item, depth + 1)); return; }
+    if (typeof value !== 'object') return;
+    if (typeof value.url === 'string' && /^https?:\/\//.test(value.url)) list.push(value);
+    for (const key of ['contents', 'thumbnails', 'thumbnail', 'musicThumbnailRenderer', 'thumbnailRenderer', 'croppedSquareThumbnailRenderer']) {
+      visit(value[key], depth + 1);
+    }
+  };
+  visit(thumbnails);
   const best = [...list].sort((left, right) => {
     const leftSize = (left.width ?? 0) * (left.height ?? 0);
     const rightSize = (right.width ?? 0) * (right.height ?? 0);
@@ -117,14 +126,15 @@ const bestThumbnailUrl = (thumbnails) => {
 };
 
 const endpointId = (endpoint) =>
+  endpoint?.payload?.videoId ?? endpoint?.payload?.browseId ??
   endpoint?.payload?.watchEndpoint?.videoId ??
   endpoint?.payload?.watchEndpoint?.playlistId ??
   endpoint?.payload?.browseEndpoint?.browseId ??
   null;
 
-const endpointBrowseId = (endpoint) => endpoint?.payload?.browseEndpoint?.browseId ?? null;
+const endpointBrowseId = (endpoint) => endpoint?.payload?.browseId ?? endpoint?.payload?.browseEndpoint?.browseId ?? null;
 const endpointPlaylistId = (endpoint) =>
-  endpoint?.payload?.watchEndpoint?.playlistId ?? endpoint?.payload?.browseEndpoint?.browseId ?? null;
+  endpoint?.payload?.playlistId ?? endpoint?.payload?.watchEndpoint?.playlistId ?? null;
 
 const isLikelyVideoId = (value) => /^[a-zA-Z0-9_-]{11}$/.test(String(value));
 

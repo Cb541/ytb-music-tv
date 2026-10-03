@@ -1,4 +1,5 @@
 import { Innertube, UniversalCache } from 'youtubei.js';
+import { bestThumbnailUrl } from './media-normalizer.js';
 
 const TV_CLIENT = 'TV';
 const TV_SESSION_CLIENT = 'TVHTML5';
@@ -214,7 +215,7 @@ const createTvClient = async ({ fetchFunction = globalThis.fetch } = {}) => awai
   cache: new UniversalCache(false),
   generate_session_locally: true,
   retrieve_player: false,
-  client_name: TV_SESSION_CLIENT,
+  client_type: TV_SESSION_CLIENT,
   fetch: fetchFunction,
 });
 
@@ -343,10 +344,6 @@ const textOf = (value) => {
   if (Array.isArray(value.runs)) return value.runs.map((run) => run?.text ?? '').join('');
   return '';
 };
-
-const bestThumbnailUrl = (thumbnail) => Array.from(thumbnail?.thumbnails ?? [])
-  .sort((left, right) => ((right.width ?? 0) * (right.height ?? 0)) -
-    ((left.width ?? 0) * (left.height ?? 0)))[0]?.url ?? null;
 
 const parseDuration = (value) => {
   const parts = String(value).split(':').map(Number);

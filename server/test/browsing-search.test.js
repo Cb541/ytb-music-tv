@@ -4,6 +4,78 @@ import { YouTubeMusicService, artistSections } from '../src/services/youtube-ser
 import { normalizeMediaNode, normalizeSearch } from '../src/services/media-normalizer.js';
 const service = () => new YouTubeMusicService({ configStore: { get: () => ({ youtube: {} }) }, sessionStore: { get: () => ({}) } });
 
+test('related pages prefer supplied IDs and recover when a stored link is stale', async () => {
+  const api = service(); const calls = [];
+  api.search = async () => { calls.push('search'); return { sections: [{ items: [{ id: 'UCfresh', title: 'Artist' }] }] }; };
+  api.browse = async ({ id }) => { calls.push(id); if (id === 'UCstale') throw Error('gone'); return { title: id, sections: [] }; };
+  assert.equal((await api.browseRelated({ artist: 'Artist', artistBrowseId: 'UCdirect' }, 'artist')).title, 'UCdirect');
+  assert.deepEqual(calls, ['UCdirect']); calls.length = 0;
+  await api.browseRelated({ artist: 'Artist – Topic', artistBrowseId: 'UCstale' }, 'artist');
+  assert.deepEqual(calls, ['UCstale', 'search', 'UCfresh']); calls.length = 0;
+  assert.equal((await api.browseRelated({ albumBrowseId: 'MPRdirect' }, 'album')).title, 'MPRdirect');
+  assert.deepEqual(calls, ['MPRdirect']);
+});
+
+test('album discovery accepts an alternate ID for the same recording and rejects wrong versions', async () => {
+  const { sameRecording } = await import('../src/services/youtube-service.js');
+  const media = { id: 'song', title: 'Artist - Song (Official Audio)', artist: 'Artist - Topic', durationMs: 180000 };
+  const alternate = { videoId: 'other', title: 'Song', artist: 'Artist', durationMs: 181000, albumBrowseId: 'MPRrecording' };
+  assert.equal(sameRecording(alternate, media), true);
+  assert.equal(sameRecording({ ...alternate, artist: 'Cover band' }, media), false);
+  assert.equal(sameRecording({ ...alternate, title: 'Song (Live)' }, media), false);
+  assert.equal(sameRecording({ ...alternate, durationMs: 220000 }, media), false);
+  const api = service(); let chosen;
+  api.search = async () => ({ sections: [{ items: [{ ...alternate, artist: 'Cover band' }, alternate] }] });
+  api.browse = async (item) => { chosen = item; return { sections: [] }; };
+  await api.browseRelated(media, 'album'); assert.equal(chosen.id, 'MPRrecording');
+});
+
+test('album searches normalize Topic artists and include the artist in the query', async () => {
+  const api = service(); const queries = [];
+  api.search = async (q, { type }) => { queries.push([q, type]); return { sections: [{ items: type === 'song' ? [] : [
+    { id: 'MPRwrong', title: 'Album', artist: 'Other' }, { id: 'MPRright', title: 'Album', artist: 'Artist' },
+  ] }] }; };
+  api.browse = async ({ id }) => ({ title: id, sections: [] });
+  assert.equal((await api.browseRelated({ title: 'Song', artist: 'Artist — Topic', album: 'Album' }, 'album')).title, 'MPRright');
+  assert.deepEqual(queries, [['Song Artist', 'song'], ['Album Artist', 'album']]);
+});
+
+test('album tracks inherit covers and links without replacing an individual cover', async () => {
+  const { albumSections } = await import('../src/services/youtube-service.js');
+  const result = albumSections({ header: { title: 'Album', author: { name: 'Artist', channel_id: 'UCartist' },
+    thumbnail: { contents: [{ url: 'https://img.example/album.jpg', width: 1000, height: 1000 }] } }, contents: [
+      { id: 'aaaaaaaaaaa', title: 'First' },
+      { id: 'bbbbbbbbbbb', title: 'Second', thumbnail: { musicThumbnailRenderer: { thumbnail: { thumbnails: [{ url: 'https://img.example/track.jpg' }] } } } },
+    ] }, {}, 'MPRalbum');
+  assert.equal(result[0].items[0].artworkUrl, 'https://img.example/album.jpg');
+  assert.equal(result[0].items[1].artworkUrl, 'https://img.example/track.jpg');
+  assert.equal(result[0].items[0].artist, 'Artist');
+  assert.equal(result[0].items[0].artistBrowseId, 'UCartist');
+  assert.equal(result[0].items[0].albumBrowseId, 'MPRalbum');
+  assert.equal(result[0].items[0].type, 'song');
+});
+
+test('flat navigation payloads and nested thumbnails survive normalization', () => {
+  const album = normalizeMediaNode({ item_type: 'album', title: 'Album', endpoint: { payload: { browseId: 'MPRalbum' } },
+    thumbnail: { contents: [{ url: 'https://img.example/small.jpg', width: 10, height: 10 }, { url: 'https://img.example/large.jpg', width: 300, height: 300 }] } });
+  assert.equal(album.id, 'MPRalbum'); assert.equal(album.browseId, 'MPRalbum'); assert.equal(album.playlistId, null);
+  assert.equal(album.artworkUrl, 'https://img.example/large.jpg');
+  const song = normalizeMediaNode({ title: 'Song', endpoint: { payload: { videoId: 'abcdefghijk' } },
+    artists: [{ name: 'Artist', channel_id: 'UCartist' }], album: { name: 'Album', endpoint: { payload: { browseId: 'MPRalbum' } } } });
+  assert.equal(song.videoId, 'abcdefghijk'); assert.equal(song.artistBrowseId, 'UCartist'); assert.equal(song.albumBrowseId, 'MPRalbum');
+  assert.equal(normalizeMediaNode({ title: 'Song', thumbnail: { contents: 'bad' } }).artworkUrl, null);
+});
+
+test('Up next supplies the exact album when search has no matching recording', async () => {
+  const api = new YouTubeMusicService({ configStore: { get: () => ({ youtube: {} }) }, sessionStore: { get: () => ({}) },
+    clientFactory: async () => ({ music: { getUpNext: async () => ({ contents: [
+      { video_id: 'wrongwrong1', album: { id: 'MPRwrong' } },
+      { video_id: 'abcdefghijk', album: { id: 'MPRexact', name: 'Album' } },
+    ] }) } }) });
+  api.search = async () => ({ sections: [] }); api.browse = async ({ id }) => ({ title: id, sections: [] });
+  assert.equal((await api.browseRelated({ videoId: 'abcdefghijk', title: 'Song', artist: 'Artist' }, 'album')).title, 'MPRexact');
+});
+
 test('entire-playlist search shares an in-flight scan and preserves full playback order', async () => {
   const api = service(); let scans = 0;
   const songs = [{ id: 'first', title: 'Other', artist: 'Artist' }, { id: 'last', title: 'Café Song', artist: 'Artist' }];

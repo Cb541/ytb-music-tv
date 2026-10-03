@@ -17,6 +17,12 @@ struct LRCLIBRecord: Decodable {
     var plainLyrics: String?
 }
 
+struct MusicCatalogAlbum: Sendable {
+    var name: String
+    var id: String?
+    var page: URL?
+}
+
 enum MusicLookup {
     static func cleaned(_ value: String) -> String {
         value.replacingOccurrences(of: #"(?i)\s*\([^)]*(official|video|audio|lyrics?|visualizer|4k|hd)[^)]*\)"#, with: "", options: .regularExpression)
@@ -25,8 +31,8 @@ enum MusicLookup {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func fetch(_ url: URL) async throws -> Data {
-        var request = URLRequest(url: url, timeoutInterval: 9)
+    static func fetch(_ url: URL, timeout: TimeInterval = 9) async throws -> Data {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.setValue("YTBMusicTV-Custom/1.0", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
@@ -131,21 +137,86 @@ enum MusicLookup {
     }
 
     static func lyricsPlus(for media: MediaItem) async -> MusicLyrics {
-        var fallback = MusicLyrics()
         let title = cleaned(songTitle(media.title, artist: media.artist)), artist = cleaned(media.artist)
-        guard !title.isEmpty, !artist.isEmpty else { return fallback }
-        var parameters = ["title": title, "artist": artist]
+        guard !title.isEmpty, !artist.isEmpty else { return MusicLyrics() }
+        var parameters = ["title": title, "artist": artist, "source": "apple,musixmatch,spotify,qq"]
         if let album = media.album, !album.isEmpty { parameters["album"] = cleaned(album) }
         if media.durationMs > 0 { parameters["duration"] = String(Double(media.durationMs) / 1000) }
-        for host in ["https://lyricsplus.binimum.org", "https://lyricsplus.prjktla.workers.dev", "https://lyricsplus-seven.vercel.app"] {
-            guard !Task.isCancelled else { return fallback }
-            if let url = query(host + "/v2/lyrics/get", parameters), let data = try? await fetch(url) {
-                let result = parseLyricsPlus(data)
-                if result.wordSynchronized { return result }
-                if !fallback.synchronized && result.synchronized { fallback = result }
-            }
+        let requests = ["https://lyricsplus.binimum.org", "https://lyricsplus.prjktla.workers.dev", "https://lyricsplus-seven.vercel.app"].enumerated().compactMap { index, host -> (URL, Int, Bool)? in
+            query(host + "/v2/lyrics/get", parameters).map { ($0, index * 1500, false) }
         }
-        return fallback
+        var extra = parameters
+        extra.removeValue(forKey: "source")
+        if let videoID = media.videoId { extra["v"] = videoID }
+        let additional = query("https://api.liriqo-alfarrizi.my.id/v1/lyrics", extra)
+        let sources = requests + (additional.map { [($0, 1200, true)] } ?? [])
+        return await withTaskGroup(of: MusicLyrics.self) { group in
+            for (url, delay, isLiriqo) in sources {
+                group.addTask {
+                    if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000) }
+                    guard !Task.isCancelled, let data = try? await fetch(url, timeout: isLiriqo ? 22 : 9), !Task.isCancelled else { return MusicLyrics() }
+                    return isLiriqo ? parseLiriqo(data, media: media) : parseLyricsPlus(data)
+                }
+            }
+            var fallback = MusicLyrics()
+            for await result in group {
+                if result.wordSynchronized { group.cancelAll(); return result }
+                if (result.synchronized && !fallback.synchronized) || (fallback.lines.isEmpty && !result.lines.isEmpty) { fallback = result }
+            }
+            return fallback
+        }
+    }
+
+    static func parseLiriqo(_ data: Data, media: MediaItem) -> MusicLyrics {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return MusicLyrics() }
+        let object = root["data"] as? [String: Any] ?? root
+        let metadata = object["metadata"] as? [String: Any] ?? [:]
+        if let title = metadata["title"] as? String, !title.isEmpty,
+           normalized(title) != normalized(cleaned(songTitle(media.title, artist: media.artist))) { return MusicLyrics() }
+        if let artist = metadata["artist"] as? String, !artist.isEmpty,
+           normalized(primaryArtist(artist)) != normalized(primaryArtist(media.artist)) { return MusicLyrics() }
+        let metadataDuration = (metadata["duration"] as? NSNumber)?.doubleValue ?? (metadata["duration"] as? String).flatMap(Double.init)
+        if let duration = metadataDuration, media.durationMs > 0,
+           abs(duration - Double(media.durationMs) / 1000) > 12 { return MusicLyrics() }
+        var tracks = object["tracks"] as? [[String: Any]] ?? []
+        if let primary = object["primary"] as? [String: Any] { tracks.insert(primary, at: 0) }
+        var ranked: [(MusicLyrics, Int)] = []
+        for track in tracks {
+            let provider = (track["provider"] as? String ?? "").lowercased()
+            // The synthesized LRCLIB word track also splits real lines into
+            // estimated single-word lines. Use its ordinary LRCLIB track instead.
+            if provider.contains("lrclib") && provider.contains("wordsync") { continue }
+            let rawLines = track["timed"] as? [[String: Any]] ?? []
+            let largestTime = rawLines.compactMap { ($0["end"] as? NSNumber)?.doubleValue ?? ($0["start"] as? NSNumber)?.doubleValue }.max() ?? 0
+            let duration = media.durationMs > 0 ? Double(media.durationMs) / 1000 : metadataDuration ?? 1200
+            // The hosted API currently uses milliseconds, while its documented
+            // seconds format is accepted too. Match the time scale to song length.
+            let timeScale = largestTime <= duration + 30 ? 1000.0 : 1.0
+            let allowWords = !provider.contains("lrclib") && ["word", "syllable"].contains(track["syncLevel"] as? String ?? "")
+            func milliseconds(_ value: Any?) -> Double? {
+                guard let number = value as? NSNumber, number.doubleValue.isFinite, number.doubleValue >= 0 else { return nil }
+                return number.doubleValue * timeScale
+            }
+            let entries = rawLines.map { line -> [String: Any] in
+                var result: [String: Any] = ["text": line["text"] as? String ?? ""]
+                result["time"] = milliseconds(line["start"])
+                result["endTime"] = milliseconds(line["end"])
+                if allowWords {
+                    result["words"] = (line["words"] as? [[String: Any]] ?? []).compactMap { word -> [String: Any]? in
+                        guard let start = milliseconds(word["start"]), let end = milliseconds(word["end"]), end >= start,
+                              let text = word["text"] as? String else { return nil }
+                        return ["text": text, "time": start, "duration": end - start]
+                    }
+                }
+                return result
+            }
+            var lyrics = MusicLyrics()
+            if let converted = try? JSONSerialization.data(withJSONObject: ["lyrics": entries, "type": "LINE"]) { lyrics = parseLyricsPlus(converted) }
+            if lyrics.lines.isEmpty { lyrics = MusicLyrics.parse(synced: nil, plain: track["plain"] as? String, instrumental: false) }
+            let rank = (lyrics.wordSynchronized ? 100 : lyrics.synchronized ? 50 : 0) + (provider.contains("apple") ? 10 : 0)
+            if !lyrics.lines.isEmpty { ranked.append((lyrics, rank)) }
+        }
+        return ranked.sorted { $0.1 > $1.1 }.first?.0 ?? MusicLyrics()
     }
 
     static func parseLyricsPlus(_ data: Data) -> MusicLyrics {
@@ -216,8 +287,12 @@ enum MusicLookup {
             let foundArtist = object["artist"] as? String ?? object["artistName"] as? String
             guard let foundArtist, normalized(primaryArtist(foundArtist)) == normalized(primaryArtist(artist)) else { continue }
             let foundTitle = object["track"] as? String ?? object["trackName"] as? String ?? object["name"] as? String
-            if let foundTitle, !foundTitle.isEmpty, normalized(foundTitle) != normalized(title) { continue }
             let foundAlbum = object["album"] as? String ?? object["collectionName"] as? String
+            let albumNamedResponse = object["track"] == nil && object["trackName"] == nil &&
+                album != nil && albumKey(foundTitle ?? "") == albumKey(album ?? "") &&
+                (object["albumId"] != nil || object["collectionId"] != nil)
+            if let foundTitle, !foundTitle.isEmpty, normalized(foundTitle) != normalized(title), !albumNamedResponse { continue }
+            if foundTitle == nil && foundAlbum == nil { continue }
             if foundTitle == nil, let album, !album.isEmpty, let foundAlbum,
                albumKey(album) != albumKey(foundAlbum) { continue }
             let animation = object["animation"] as? [String: Any]
@@ -231,15 +306,82 @@ enum MusicLookup {
         return nil
     }
 
-    static func discoveredAlbum(_ data: Data, title: String, artist: String, durationMs: Int) -> String? {
+    static func catalogAlbum(_ data: Data, title: String, artist: String, album: String?, durationMs: Int) -> MusicCatalogAlbum? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let records = object["results"] as? [[String: Any]] else { return nil }
-        return records.first { record in
+        let compatible = records.filter { record in
             normalized(record["trackName"] as? String ?? "") == normalized(title) &&
             normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)) &&
             (durationMs <= 0 || record["trackTimeMillis"] == nil ||
-             abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000)
-        }?["collectionName"] as? String
+             abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000) &&
+            (album == nil || albumKey(record["collectionName"] as? String ?? "") == albumKey(album ?? ""))
+        }
+        guard let record = compatible.first, let name = record["collectionName"] as? String else { return nil }
+        let id = (record["collectionId"] as? NSNumber)?.stringValue
+        let page = validURL(record["collectionViewUrl"]).flatMap { $0.host == "music.apple.com" ? $0 : nil }
+        return MusicCatalogAlbum(name: name, id: id, page: page)
+    }
+
+    static func discoveredAlbum(_ data: Data, title: String, artist: String, durationMs: Int) -> String? {
+        catalogAlbum(data, title: title, artist: artist, album: nil, durationMs: durationMs)?.name
+    }
+
+    // Only read motion belonging to this album. Recommended albums elsewhere on
+    // the page must never supply the current song's artwork.
+    static func applePageArtwork(_ data: Data, albumID: String, fallback: URL?) -> MusicArtworkResult? {
+        guard let html = String(data: data, encoding: .utf8),
+              let regex = try? NSRegularExpression(pattern: #"(?is)<script\b[^>]*\bid=["']serialized-server-data["'][^>]*>(.*?)</script>"#),
+              let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+              let range = Range(match.range(at: 1), in: html),
+              let json = try? JSONSerialization.jsonObject(with: Data(html[range].utf8)) else { return nil }
+        func find(_ value: Any, depth: Int = 0) -> URL? {
+            guard depth < 30 else { return nil }
+            if let array = value as? [Any] {
+                for element in array { if let url = find(element, depth: depth + 1) { return url } }
+            } else if let object = value as? [String: Any] {
+                let descriptor = object["contentDescriptor"] as? [String: Any]
+                let identifiers = descriptor?["identifiers"] as? [String: Any]
+                let id = identifiers?["storeAdamID"] as? String ?? object["id"] as? String ?? (object["id"] as? NSNumber)?.stringValue ?? object["adamId"] as? String
+                if id == albumID && (descriptor == nil || descriptor?["kind"] as? String == "album") {
+                    let attributes = object["attributes"] as? [String: Any] ?? object
+                    let videoArtwork = object["videoArtwork"] as? [String: Any]
+                    let editorial = attributes["editorialVideo"] as? [String: Any] ?? videoArtwork?["dictionary"] as? [String: Any] ?? [:]
+                    for key in ["motionDetailSquare", "motionSquareVideo1x1"] {
+                        if let video = editorial[key] as? [String: Any], let url = motionURL(video["video"]) { return url }
+                    }
+                    if let motion = attributes["motionArtwork"] as? [String: Any],
+                       let url = motionURL(motion["videoUrl"] ?? motion["url"]) { return url }
+                }
+                for element in object.values { if let url = find(element, depth: depth + 1) { return url } }
+            }
+            return nil
+        }
+        guard let motion = find(json) else { return nil }
+        return MusicArtworkResult(still: fallback, motion: motion)
+    }
+
+    static func catalogArtwork(_ catalog: MusicCatalogAlbum, country: String, title: String, artist: String, durationMs: Int, fallback: URL?) async -> MusicArtworkResult? {
+        let page = catalog.page ?? catalog.id.flatMap { URL(string: "https://music.apple.com/" + country + "/album/" + $0) }
+        var requests = artworkRequests(title: title, artist: artist, album: catalog.name, durationMs: durationMs, includeCatalog: false)
+        if let page {
+            requests = [
+                query("https://artwork.m8tec.top/api/v1/artwork/url", ["url": page.absoluteString]),
+                query("https://artwork.boidu.dev/", ["url": page.absoluteString]),
+                query("https://apple-music-artwork.nopxx.site/api/search", ["term": page.absoluteString, "animation": "1"])
+            ].compactMap { $0 }
+        }
+        let resolvedRequests = requests
+        return await withTaskGroup(of: MusicArtworkResult?.self) { group in
+            group.addTask { await firstArtwork(from: resolvedRequests, title: title, artist: artist, album: catalog.name, fallback: fallback) }
+            if let page, let id = catalog.id {
+                group.addTask {
+                    guard !Task.isCancelled, let data = try? await fetch(page), !Task.isCancelled else { return nil }
+                    return applePageArtwork(data, albumID: id, fallback: fallback)
+                }
+            }
+            for await result in group { if let result { group.cancelAll(); return result } }
+            return nil
+        }
     }
 
     static func firstArtwork(
@@ -285,13 +427,14 @@ enum MusicLookup {
             group.addTask {
                 await firstArtwork(from: direct, title: title, artist: artist, album: album, fallback: fallback)
             }
-            if album == nil {
+            for (index, country) in ["us", "gb"].enumerated() {
                 group.addTask {
-                    guard let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": "us", "limit": "12"]),
+                    if index > 0 { try? await Task.sleep(nanoseconds: 1_500_000_000) }
+                    guard !Task.isCancelled,
+                          let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": country, "limit": "12"]),
                           let data = try? await fetch(url), !Task.isCancelled,
-                          let discovered = discoveredAlbum(data, title: title, artist: artist, durationMs: durationMs) else { return nil }
-                    let enriched = artworkRequests(title: title, artist: artist, album: discovered, durationMs: durationMs, includeCatalog: false)
-                    return await firstArtwork(from: enriched, title: title, artist: artist, album: discovered, fallback: fallback)
+                          let catalog = catalogAlbum(data, title: title, artist: artist, album: album, durationMs: durationMs) else { return nil }
+                    return await catalogArtwork(catalog, country: country, title: title, artist: artist, durationMs: durationMs, fallback: fallback)
                 }
             }
             for await result in group {

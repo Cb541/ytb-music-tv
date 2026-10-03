@@ -40,6 +40,8 @@ struct MediaItem: Codable, Identifiable, Equatable {
     var title: String
     var artist: String
     var album: String?
+    var artistBrowseId: String?
+    var albumBrowseId: String?
     var durationMs: Int
     var artworkUrl: URL?
     var streamUrl: URL?
@@ -149,7 +151,7 @@ extension KeyedDecodingContainer {
 extension MediaItem {
     enum CodingKeys: String, CodingKey {
         case id, videoId, browseId, playlistId, type, title, artist, album, durationMs
-        case artworkUrl, streamUrl, sourceUrl, playbackUrl, likeStatus, tags
+        case artworkUrl, streamUrl, sourceUrl, playbackUrl, likeStatus, tags, artistBrowseId, albumBrowseId
     }
 
     init(from decoder: Decoder) throws {
@@ -162,6 +164,8 @@ extension MediaItem {
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         artist = (try? c.decode(String.self, forKey: .artist)) ?? ""
         album = try? c.decode(String.self, forKey: .album)
+        artistBrowseId = try? c.decode(String.self, forKey: .artistBrowseId)
+        albumBrowseId = try? c.decode(String.self, forKey: .albumBrowseId)
         durationMs = max(0, c.tolerantInt(forKey: .durationMs))
         artworkUrl = c.tolerantURL(forKey: .artworkUrl)
         streamUrl = c.tolerantURL(forKey: .streamUrl)
@@ -199,5 +203,16 @@ extension ResolvedStream {
         adaptiveVideoProxyUrl = c.tolerantURL(forKey: .adaptiveVideoProxyUrl)
         adaptiveAudioProxyUrl = c.tolerantURL(forKey: .adaptiveAudioProxyUrl)
         media = try? c.decode(MediaItem.self, forKey: .media)
+    }
+}
+
+// Browsing categories filter the current page without replacing it with a global search.
+func filteredBrowseSections(_ sections: [MediaSection], category: String, query: String) -> [MediaSection] {
+    sections.compactMap { section in
+        let items = section.items.filter { media in
+            let matchesCategory = category == "all" || media.type == category || (category == "song" && media.isPlayable)
+            return matchesCategory && media.matchesSearch(query)
+        }
+        return items.isEmpty ? nil : MediaSection(id: section.id, title: section.title, items: items)
     }
 }

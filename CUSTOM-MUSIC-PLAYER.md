@@ -1,6 +1,6 @@
 # Custom Apple TV music player
 
-Based on Hk-Gosuto/ytb-music-tv nightly commit 336831f. The Docker server is unchanged.
+Based on Hk-Gosuto/ytb-music-tv nightly commit 336831f, with custom tvOS presentation and Docker server browsing/playback updates.
 
 ## Changes
 
@@ -298,3 +298,41 @@ Queue's top action row adds an artwork-tinted Like song button with a thumbs-up 
 ## Approved midnight-blue app icon (v58)
 
 The Apple TV home-screen icon uses the approved dark navy circle on an OLED-black background, with the rounded white screen box and a single upright music note. The box and note sit higher in the circle; the stem is wider with the final shortened length. Small and large catalog layers, the square master, and the top-shelf image use the same approved raster, exported without stretching. Both icon backdrops are black. Catalog dimensions and asset names remain compatible with the existing build. No server update is required.
+
+## Optional cookie-authenticated Music audio (v59)
+
+Device diagnostics showed HTTP 400 for Music requests carrying TV OAuth tokens. The installed youtubei.js 17 also uses client_type for session initialization; the previously supplied client_name was ignored. TV playback and Library clients now use the correct option. Music playback requests no longer carry the TV OAuth session. Public Music fallback uses getBasicInfo with a five-second limit instead of fetching Up next.
+
+An optional Netscape cookie export at the server data directory's youtube-music.cookies.txt provides a separate WEB_REMIX session for Music audio. YTB_MUSIC_TV_COOKIE_FILE can override the path. Only unexpired root-domain YouTube cookies are imported; unrelated domains and invalid header characters are rejected, and SAPISID is required. Cookie contents never enter public configuration, repository files, or update-script output. Changed or removed files replace or clear the cached cookie client. The separate session reuses the existing signature player without an additional network configuration fetch.
+
+Working TV playback uses better AAC from the cookie session only when its bitrate improves. If TV playback fails, a playable cookie Music response with compatible AAC can supply playback; errors, timeouts, or absent formats retain public fallbacks. Premium membership and actual returned formats still determine available fidelity; 256 kbps is not guaranteed, and Opus/WebM is not transcoded. Existing OAuth Library and rating authentication remain. Fifty-seven Node tests pass, including cookie filtering, separate-session routing, changes/removal, TV failure, unplayable results, and timeouts. Real-account playback remains to be checked. Install the server v59 update; existing v53-or-later TV clients work without a new IPA.
+
+## Bounded playback lookups and cookie diagnostics (v60)
+
+Playback-info resolution has a 20-second overall deadline. TV and public fallback probes are limited to eight seconds each, while the Music quality opportunity remains five seconds. Deadline cancellation reaches network requests through an async request scope; unrelated Library browsing is unaffected. Failed client initialization clears its cached promise so the next attempt can retry. Responses marked OK without compatible audio continue through fallback clients instead of stopping resolution prematurely.
+
+The local check-audio command probes cookie Music and cookie Web playback directly, avoiding the old diagnostic's unbounded public fallback chain. It reports HTTP authentication type, cookie-header presence, direct or nested player status, returned format count, highest AAC bitrate, and the presence of SABR or challenge fields. It does not print credentials, account details, or stream URLs. Sixty Node tests pass, including network cancellation, unaffected browsing, empty playable responses, and safe nested-response summaries. A server-only update preserves the installed cookies and existing IPA. The user's current TV response is UNPLAYABLE with a reload request; actual cookie playback and higher-quality availability still require the new diagnostic on their server.
+
+## Correct large-response audio inspection (v61)
+
+The v60 diagnostic received HTTP 200 from cookie Music and Web but stalled before printing their player status. The checker awaited response.clone().json() before youtubei.js consumed the original response. node-fetch's clone buffers can deadlock on large responses when consumed sequentially; a 250 KB streamed fixture reproduced the stall. The diagnostic now reads the original body once and supplies a buffered replacement response to youtubei.js. Status, headers and body remain available to its parser, with stale transport-encoding and length headers removed. This correction affects diagnostics only and does not establish the account's returned audio quality.
+
+Sixty-two Node tests pass, including prompt large-response inspection, the parser reading the full replayed response, and non-JSON error preservation. The standalone check-music-audio-v61.sh runs the corrected checker in the existing server container using its local credentials, without rebuilding the server or changing the installed IPA. No credentials or response bodies enter the script or its output.
+
+## v62: artist menu, reliable browsing, and broader provider coverage
+
+The top-left artist/album menu now contains View artist, View album, the current stream's reported kbps, and Like/Unlike. The queue retains its music-video action and song search. Likes still use the authenticated YouTube rating route; bitrate still comes from the selected audio format.
+
+Artist/album/playlist category tabs filter the page being browsed instead of launching an empty global search that clears it. Search navigation restores parent headings as well as results. Artist and album browse IDs survive client decoding and playback metadata merging. Related destinations prefer their supplied links, recover from stale links, match alternative IDs only for the same title/artist/recording duration, and consult the exact video's Up next album link. Album-name searches include the artist and normalize Topic suffixes. Live/remix/cover versions are not silently substituted.
+
+Flat youtubei.js NavigationEndpoint payloads and nested thumbnail renderers are normalized. Album tracks without individual covers inherit their album's cover, artist and album links; existing individual covers are preserved. Public playlists can inherit their playlist cover as a final fallback. OAuth TV tiles share the same thumbnail normalization.
+
+LyricsPlus remains the first word-lyrics request, with Apple/Musixmatch/Spotify/QQ preference and staggered mirror requests. LiriQo adds independent access to Apple Music lyric providers, QQ, KuGou, NetEase and YouTube Music line lyrics. Real word/syllable timing wins over line timing; Apple timing is preferred within multi-provider replies. LRCLIB supplies fast line/plain fallback. Synthesized LRCLIB word tracks are excluded. The hosted LiriQo response currently uses milliseconds even though its README describes seconds; both formats are accepted using the recording's duration. Metadata mismatches are rejected. The first usable result is displayed without waiting for another provider; optional lookup never blocks audio playback.
+
+Artwork keeps m8tec, Boidu and NopXx, adds direct Apple Music public album-page motion lookup, and tries exact catalog album URLs/IDs from US and GB song matches. Song title, artist, known album and duration are checked before using a catalog match. Direct page extraction requires the matching album ID and square motion; recommendation and tall artwork are ignored. Successful existing motion caches remain in use. Missing animation or provider failures fall back to the ordinary cover.
+
+Live validation: m8tec returned square motion for Coldplay's Moon Music. Apple's public Moon Music album page exposed matching square motion, and the Swift parser accepted it while rejecting an unrelated album ID. A LiriQo Yellow response supplied real Apple, QQ and KuGou words; Swift validation confirmed usable word timing in seconds. LyricsPlus mirrors can return missing-result/server errors and remain optional fallbacks. Additional providers do not guarantee coverage for every recording.
+
+Verification: 68 server tests pass; Swift 6.2.3 Foundation model/lyric tests, live provider parsing, and syntax parsing of all Swift files pass. The full tvOS SDK compile and device focus/navigation verification run after the GitHub updater. Apply the server updater and client updater, then sideload only the resulting single IPA. Existing local playback cookies and OAuth authorization are preserved.
+
+Provider contracts: https://github.com/AlFarrizi-Studio/LiriQo, https://github.com/ibratabian17/LyricsPlus/blob/cookie/docs/endpoints.md, https://github.com/m8tec/apple-music-animated-artworks, https://github.com/boidushya/artwork.boidu.dev, https://github.com/NopXx/apple-music-artwork-search.

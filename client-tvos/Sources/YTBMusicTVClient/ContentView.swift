@@ -814,9 +814,16 @@ private struct SearchView: View {
                 Text("Playlists").tag("playlist")
             }
             .pickerStyle(.segmented)
-            .onChange(of: searchType) { runSearch() }
+            .onChange(of: searchType) { if viewModel.searchPageTitle == nil && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { runSearch() } }
             if searchType == "playlist" { Text("Public and community playlists").font(.caption).foregroundStyle(.secondary) }
-            MediaSectionList(sections: viewModel.searchSections, l10n: l10n, select: select, playlist: viewModel.searchPlaylist, viewModel: viewModel)
+            MediaSectionList(sections: visibleSections, l10n: l10n, select: select, playlist: viewModel.searchPlaylist, viewModel: viewModel)
+            if visibleSections.isEmpty && !viewModel.isSearching && viewModel.searchPageTitle != nil {
+                Text("No matching items on this page.").foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: viewModel.searchPageTitle) {
+            query = ""
+            searchType = "all"
         }
         .onExitCommand {
             if !viewModel.navigateBackSearch() {
@@ -825,7 +832,12 @@ private struct SearchView: View {
         }
     }
 
+    private var visibleSections: [MediaSection] {
+        viewModel.searchPageTitle == nil ? viewModel.searchSections : filteredBrowseSections(viewModel.searchSections, category: searchType, query: query)
+    }
+
     private func runSearch() {
+        guard viewModel.searchPageTitle == nil else { return }
         Task { await viewModel.search(query, type: searchType) }
     }
 }

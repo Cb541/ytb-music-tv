@@ -1,6 +1,12 @@
 import { Innertube, Parser, Platform, UniversalCache, YTNodes } from 'youtubei.js';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const playbackRequestScope = new AsyncLocalStorage();
 
 import {
+  bestThumbnailUrl,
   normalizeMediaNode,
   normalizeSearch,
   normalizeSection,
@@ -23,15 +29,31 @@ export class YouTubeMusicService {
   #fetch;
   #clientPromise;
   #playbackClientPromise;
+  #cookieClientPromise;
+  #cookieHeader = '';
+  #cookieFile;
+  #clientFactory;
+  #cookieWarning = false;
   #streamCache = new Map();
   #streamInflight = new Map();
   #playlistSearchCache = new Map();
 
-  constructor({ configStore, sessionStore, oauthLibraryService = null, fetchFunction = globalThis.fetch }) {
+  constructor({ configStore, sessionStore, oauthLibraryService = null, fetchFunction = globalThis.fetch,
+    cookieFile = join(process.env.YTB_MUSIC_TV_DATA_DIR ?? new URL('../../data', import.meta.url).pathname, 'youtube-music.cookies.txt'),
+    clientFactory = (options) => Innertube.create(options) }) {
     this.#configStore = configStore;
     this.#sessionStore = sessionStore;
     this.#oauthLibraryService = oauthLibraryService;
-    this.#fetch = fetchFunction;
+    this.#fetch = (input, init = {}) => {
+      const scopeSignal = playbackRequestScope.getStore();
+      if (!scopeSignal) return fetchFunction(input, init);
+      const requestSignal = init.signal ?? input?.signal;
+      const signal = requestSignal ? AbortSignal.any([requestSignal, scopeSignal]) : scopeSignal;
+      signal.throwIfAborted();
+      return fetchFunction(input, { ...init, signal });
+    };
+    this.#cookieFile = process.env.YTB_MUSIC_TV_COOKIE_FILE ?? cookieFile;
+    this.#clientFactory = clientFactory;
   }
 
   authStatus() {
@@ -40,7 +62,7 @@ export class YouTubeMusicService {
     return {
       mode: 'google-device-oauth',
       status: oauth.status,
-      hasCookie: false,
+      hasCookie: Boolean(this.#cookieHeader),
       hasOAuthToken: Boolean(oauth.hasRefreshToken),
       hasPoToken: Boolean(session.poToken),
       hasVisitorData: Boolean(session.visitorData),
@@ -75,19 +97,44 @@ export class YouTubeMusicService {
 
   async browseRelated(media, kind) {
     if (!['artist', 'album'].includes(kind)) throw new Error('Invalid destination');
-    let name = kind === 'artist' ? String(media?.artist ?? '').replace(/\s*-\s*Topic$/i, '').split(',')[0].trim() : media?.album;
-    if (kind === 'album' && !name) {
-      const songs = await this.search([media?.title, media?.artist].filter(Boolean).join(' '), { type: 'song' });
-      const candidates = songs.sections.flatMap((section) => section.items);
-      const song = candidates.find((item) => item.videoId === (media?.videoId ?? media?.id));
-      if (song?.albumBrowseId) return this.browse({ id: song.albumBrowseId, type: 'album' });
-      name = song?.album;
+    const artist = primaryMusicArtist(media?.artist);
+    let name = kind === 'artist' ? artist : media?.album;
+    const open = async (id, type) => {
+      if (!id || !(type === 'artist' ? isArtistId(id) : isAlbumId(id))) return null;
+      try {
+        const result = await this.browse({ id, type });
+        return Array.isArray(result.sections) && !result.reason ? result : null;
+      } catch { return null; } // Stale catalog links should fall through to metadata lookup.
+    };
+    const linked = await open(kind === 'artist' ? media?.artistBrowseId : media?.albumBrowseId, kind);
+    if (linked) return linked;
+    if (kind === 'album') {
+      let candidates = [];
+      try {
+        const songs = await this.search([musicTitle(media?.title, artist), artist].filter(Boolean).join(' '), { type: 'song' });
+        candidates = songs.sections.flatMap((section) => section.items);
+      } catch { /* The current-song endpoint can still supply its album. */ }
+      const song = candidates.find((item) => item.videoId === (media?.videoId ?? media?.id)) ??
+        candidates.find((item) => sameRecording(item, media) && (!media?.album || catalogKey(item.album) === catalogKey(media.album)));
+      const matched = await open(song?.albumBrowseId, 'album');
+      if (matched) return matched;
+      name = name || song?.album;
+      // Unlike a fuzzy search, Up next carries the album link for this exact video.
+      if (/^[a-zA-Z0-9_-]{11}$/.test(media?.videoId ?? media?.id ?? '')) {
+        try {
+          const queue = await boundedMusicInfo(async () => (await this.#client()).music.getUpNext(media.videoId ?? media.id, false), { timeoutMs: 4000 });
+          const current = Array.from(queue?.contents ?? []).find((item) => item.video_id === (media.videoId ?? media.id));
+          const exact = await open(current?.album?.id, 'album');
+          if (exact) return exact;
+          name = current?.album?.name || name;
+        } catch { /* Retain the useful search result when the exact-video lookup is unavailable. */ }
+      }
     }
     if (!name) throw new Error(`No ${kind} information is available for this song.`);
-    const response = await this.search(name, { type: kind });
+    const response = await this.search(kind === 'album' ? [name, artist].filter(Boolean).join(' ') : name, { type: kind });
     const candidates = response.sections.flatMap((section) => section.items);
-    const match = candidates.find((item) => searchKey(item.title) === searchKey(name) &&
-      (kind === 'artist' || !media.artist || searchKey(item.artist).includes(searchKey(String(media.artist).split(',')[0]))));
+    const match = candidates.find((item) => catalogKey(item.title) === catalogKey(name) &&
+      (kind === 'artist' || !artist || catalogKey(primaryMusicArtist(item.artist)) === catalogKey(artist)));
     if (!match) throw new Error(`Could not find an exact ${kind} match. Try the ${kind} Search tab.`);
     return this.browse(match);
   }
@@ -158,14 +205,7 @@ export class YouTubeMusicService {
       return {
         id,
         title: album.header?.title?.toString?.() ?? media?.title ?? 'Album',
-        sections: [
-          {
-            id: 'tracks',
-            title: 'Tracks',
-            items: Array.from(album.contents ?? []).map((item) => normalizeMediaNode(item)).filter(Boolean),
-          },
-          ...Array.from(album.sections ?? []).map(normalizeSection),
-        ],
+        sections: albumSections(album, media, id),
       };
     }
 
@@ -189,7 +229,7 @@ export class YouTubeMusicService {
           {
             id: 'tracks',
             title: 'Tracks',
-            items: await fullPlaylistItems(playlist),
+            items: (await fullPlaylistItems(playlist)).map((item) => ({ ...item, artworkUrl: item.artworkUrl ?? bestThumbnailUrl(playlist.header?.thumbnails ?? playlist.header?.thumbnail) ?? media.artworkUrl ?? null })),
           },
         ],
       };
@@ -223,7 +263,7 @@ export class YouTubeMusicService {
     return {
       id: playlistId,
       title: playlist.header?.title?.toString?.() ?? playlistId,
-      items: await fullPlaylistItems(playlist),
+      items: (await fullPlaylistItems(playlist)).map((item) => ({ ...item, artworkUrl: item.artworkUrl ?? bestThumbnailUrl(playlist.header?.thumbnails ?? playlist.header?.thumbnail) ?? media.artworkUrl ?? null })),
     };
   }
 
@@ -364,16 +404,26 @@ export class YouTubeMusicService {
   }
 
   async #playbackInfo(videoId, { skipOAuth = false } = {}) {
+    const info = await boundedMusicInfo(() => this.#resolvePlaybackInfo(videoId, { skipOAuth }), { timeoutMs: 20000 });
+    if (!info) throw new Error('Playback lookup failed or timed out. Please try again.');
+    return info;
+  }
+
+  async #resolvePlaybackInfo(videoId, { skipOAuth = false } = {}) {
     let fallbackInfo = null;
     let fallbackError = null;
     if (!skipOAuth) {
       const playbackClient = await this.#playbackClient();
+      const cookieClient = await this.#cookieMusicClient(playbackClient);
       if (this.#oauthLibraryService?.authStatus().status === 'configured') {
         try {
           await this.#oauthLibraryService.authorizeSession(playbackClient);
-          const info = await playbackClient.getBasicInfo(videoId, { client: 'TV' });
-          if (isPlayable(info)) {
-            return await upgradeMusicAudio(info, () => playbackClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
+          const info = await boundedMusicInfo(() => playbackClient.getBasicInfo(videoId, { client: 'TV' }), { timeoutMs: 8000 });
+          if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) {
+            // Music web playback can reject TV OAuth tokens. Use the optional
+            // browser-cookie session for Premium audio, without changing Library auth.
+            return cookieClient ? await upgradeMusicAudio(info, () => cookieClient
+              .getBasicInfo(videoId, { client: 'YTMUSIC' })) : info;
           }
           console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
         } catch (error) {
@@ -381,24 +431,31 @@ export class YouTubeMusicService {
         }
       }
 
+      if (cookieClient) {
+        const info = await boundedMusicInfo(() => cookieClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
+        if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) return info;
+        console.warn('Cookie Music playback unavailable; retaining existing playback fallback.');
+      }
+
       try {
-        const info = await playbackClient.music.getInfo(videoId);
-        if (isPlayable(info)) {
+        const publicClient = await this.#client();
+        const info = await boundedMusicInfo(() => publicClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
+        if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) {
           return info;
         }
         fallbackInfo = info;
-        console.warn(`music.getInfo returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}, falling back to getBasicInfo`);
+        console.warn(`Public Music player returned ${info?.playability_status?.status ?? 'unavailable'} for ${videoId}, falling back to getBasicInfo`);
       } catch (error) {
         fallbackError = error;
-        console.warn(`music.getInfo failed for ${videoId}, falling back to getBasicInfo: ${error?.message ?? error}`);
+        console.warn(`Public Music player failed for ${videoId}, falling back to getBasicInfo: ${error?.message ?? error}`);
       }
     }
 
     const client = await this.#client();
     for (const clientName of ['ANDROID', 'WEB', 'IOS']) {
       try {
-        const info = await client.getBasicInfo(videoId, { client: clientName });
-        if (isPlayable(info)) {
+        const info = await boundedMusicInfo(() => client.getBasicInfo(videoId, { client: clientName }), { timeoutMs: 8000 });
+        if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) {
           return info;
         }
         fallbackInfo = info;
@@ -454,7 +511,8 @@ export class YouTubeMusicService {
         retrievePlayer: false,
       });
     }
-    return await this.#clientPromise;
+    try { return await this.#clientPromise; }
+    catch (error) { this.#clientPromise = null; throw error; }
   }
 
   async #playbackClient() {
@@ -464,7 +522,42 @@ export class YouTubeMusicService {
         clientName: 'TVHTML5',
       });
     }
-    return await this.#playbackClientPromise;
+    try { return await this.#playbackClientPromise; }
+    catch (error) { this.#playbackClientPromise = null; throw error; }
+  }
+
+  async #cookieMusicClient(playbackClient) {
+    if (!this.#cookieFile) return null;
+    let cookie = '';
+    try {
+      cookie = cookieHeaderFromNetscape(await readFile(this.#cookieFile, 'utf8'));
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && !this.#cookieWarning) {
+        console.warn('Unable to load YouTube Music cookie file; using existing playback.');
+        this.#cookieWarning = true;
+      }
+    }
+    if (!cookie) {
+      this.#cookieHeader = '';
+      this.#cookieClientPromise = null;
+      return null;
+    }
+    this.#cookieWarning = false;
+    if (cookie !== this.#cookieHeader || !this.#cookieClientPromise) {
+      this.#cookieHeader = cookie;
+      this.#cookieClientPromise = this.#createClient({ retrievePlayer: false, clientName: 'WEB_REMIX', cookie });
+    }
+    try {
+      const client = await this.#cookieClientPromise;
+      // Reuse the already-loaded signature player so the optional lookup doesn't
+      // add another player-script fetch or change stream deciphering.
+      client.session.player = playbackClient.session.player;
+      return client;
+    } catch {
+      this.#cookieClientPromise = null;
+      console.warn('Unable to initialize cookie Music playback; using existing playback.');
+      return null;
+    }
   }
 
   async #decipherFormat(format) {
@@ -486,11 +579,11 @@ export class YouTubeMusicService {
     }
   }
 
-  async #createClient({ retrievePlayer, clientName = null }) {
+  async #createClient({ retrievePlayer, clientName = null, cookie = null }) {
     const config = this.#configStore.get();
     const session = this.#sessionStore.get();
 
-    const client = await Innertube.create({
+    const client = await this.#clientFactory({
       cache: new UniversalCache(false),
       po_token: session.poToken || config.youtube.poToken || undefined,
       visitor_data: session.visitorData || config.youtube.visitorData || undefined,
@@ -499,7 +592,8 @@ export class YouTubeMusicService {
       generate_session_locally: true,
       retrieve_player: retrievePlayer,
       fetch: this.#fetch,
-      ...(clientName ? { client_name: clientName } : {}),
+      ...(cookie ? { cookie, retrieve_innertube_config: false } : {}),
+      ...(clientName ? { client_type: clientName } : {}),
     });
     return client;
   }
@@ -567,7 +661,7 @@ const notPlayable = (message) => {
 
 const isPlayable = (info) => {
   const status = info?.playability_status;
-  return !status || status.status === 'OK';
+  return Boolean(info) && (!status || status.status === 'OK');
 };
 
 const streamVideoId = (media) => media?.videoId ?? media?.id ?? null;
@@ -724,24 +818,89 @@ const compatibleAudioFormats = (formats) => Array.from(formats ?? []).filter((fo
   return format?.has_audio === true && format?.has_video !== true && mime.startsWith('audio/mp4') && mime.includes('mp4a');
 }).sort((left, right) => audioBitrate(right) - audioBitrate(left));
 
+export const cookieHeaderFromNetscape = (text, { now = Date.now() } = {}) => {
+  if (typeof text !== 'string' || text.length > 131072) throw new Error('Invalid cookie file');
+  const cookies = new Map();
+  for (let line of text.split(/\r?\n/)) {
+    if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
+    if (!line || line.startsWith('#')) continue;
+    const fields = line.split('\t');
+    if (fields.length !== 7) continue;
+    const [domain, , path, , expires, name, value] = fields;
+    if (!['.youtube.com', 'youtube.com'].includes(domain.toLowerCase()) || path !== '/') continue;
+    const expiry = Number(expires);
+    if (!Number.isFinite(expiry) || expiry < 0 || (expiry && expiry * 1000 <= now)) continue;
+    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name) || !/^[\x21-\x3A\x3C-\x7E]+$/.test(value)) continue;
+    cookies.set(name, value);
+  }
+  // youtubei.js signs cookie requests with SAPISID. Don't send unrelated or
+  // incomplete exports as though they provided an authenticated Music session.
+  if (!cookies.has('SAPISID')) return '';
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+};
+
+export const boundedMusicInfo = async (fetchMusicInfo, { timeoutMs = 5000 } = {}) => {
+  const controller = new AbortController();
+  const parent = playbackRequestScope.getStore();
+  const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+  let deadline, onAbort;
+  try {
+    if (signal.aborted) return null;
+    return await Promise.race([
+      playbackRequestScope.run(signal, () => Promise.resolve().then(() => fetchMusicInfo(signal))),
+      new Promise((resolve) => {
+        onAbort = () => resolve(null);
+        signal.addEventListener('abort', onAbort, { once: true });
+        deadline = setTimeout(() => controller.abort(), timeoutMs);
+      }),
+    ]);
+  } catch { return null; }
+  finally {
+    clearTimeout(deadline);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+    controller.abort();
+  }
+};
+
 export const upgradeMusicAudio = async (info, fetchMusicInfo, { timeoutMs = 5000 } = {}) => {
   const data = info?.streaming_data;
   if (!data) return info;
   const current = compatibleAudioFormats([...(data.formats ?? []), ...(data.adaptive_formats ?? [])])[0];
   if (audioBitrate(current) >= 256000) return info;
-  let deadline;
-  try {
-    const musicInfo = await Promise.race([
-      Promise.resolve().then(fetchMusicInfo),
-      new Promise((resolve) => { deadline = setTimeout(() => resolve(null), timeoutMs); }),
-    ]);
-    const musicData = musicInfo?.streaming_data;
-    const audio = compatibleAudioFormats([...(musicData?.formats ?? []), ...(musicData?.adaptive_formats ?? [])])[0];
-    if (audio && audioBitrate(audio) > audioBitrate(current)) {
-      // Keep TV video formats, metadata and methods; only add the improved audio track.
-      data.adaptive_formats = [...(data.adaptive_formats ?? []), audio];
-    }
-  } catch { /* Keep the working authenticated TV stream if Music lookup is unavailable. */ }
-  finally { clearTimeout(deadline); }
+  const musicInfo = await boundedMusicInfo(fetchMusicInfo, { timeoutMs });
+  if (!isPlayable(musicInfo)) return info;
+  const musicData = musicInfo?.streaming_data;
+  const audio = compatibleAudioFormats([...(musicData?.formats ?? []), ...(musicData?.adaptive_formats ?? [])])[0];
+  if (audio && audioBitrate(audio) > audioBitrate(current)) {
+    // Keep TV video formats, metadata and methods; only add the improved audio track.
+    data.adaptive_formats = [...(data.adaptive_formats ?? []), audio];
+  }
   return info;
+};
+
+const primaryMusicArtist = (value) => String(value ?? '').replace(/\s*[-–—]\s*Topic(?=,|$)/gi, '').split(/,|;| feat\.? | featuring | ft\.? /i)[0].trim();
+const musicTitle = (value, artist) => {
+  const title = String(value ?? '').replace(/\s*[([][^)\]]*(?:official|video|audio|lyrics?|visualizer|4k|hd)[^)\]]*[)\]]/gi, '').trim();
+  const parts = title.split(/\s+[-–—]\s+/);
+  return parts.length > 1 && catalogKey(parts[0]) === catalogKey(artist) ? parts.slice(1).join(' - ') : title;
+};
+const catalogKey = (value) => searchKey(value).replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+export const sameRecording = (candidate, media) => Boolean(candidate.title && candidate.artist &&
+  catalogKey(musicTitle(candidate.title, primaryMusicArtist(candidate.artist))) === catalogKey(musicTitle(media?.title, primaryMusicArtist(media?.artist))) &&
+  catalogKey(primaryMusicArtist(candidate.artist)) === catalogKey(primaryMusicArtist(media?.artist)) &&
+  (!candidate.durationMs || !media?.durationMs || Math.abs(candidate.durationMs - media.durationMs) <= 12000));
+
+export const albumSections = (album, media, id) => {
+  const header = album.header;
+  const author = header?.author ?? header?.strapline_text_one?.runs?.find((run) => run.endpoint?.payload?.browseId?.startsWith('UC'));
+  const fallback = {
+    itemType: 'song', album: header?.title?.toString?.() ?? media.title,
+    albumBrowseId: id, artist: author?.name ?? author?.text ?? media.artist,
+    artistBrowseId: author?.channel_id ?? author?.endpoint?.payload?.browseId ?? media.artistBrowseId,
+    artworkUrl: bestThumbnailUrl(header?.thumbnails ?? header?.thumbnail) ?? media.artworkUrl,
+  };
+  return [
+    { id: 'tracks', title: 'Tracks', items: Array.from(album.contents ?? []).map((item) => normalizeMediaNode(item, fallback)).filter(Boolean) },
+    ...Array.from(album.sections ?? []).map(normalizeSection),
+  ];
 };

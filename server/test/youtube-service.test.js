@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   libraryFromParsedResponse,
   selectTvOSFormats,
   upgradeMusicAudio,
+  cookieHeaderFromNetscape,
+  boundedMusicInfo,
   YouTubeMusicService,
 } from '../src/services/youtube-service.js';
 
@@ -173,4 +178,122 @@ test('slow Music quality lookup returns the working stream within its deadline a
   finish({ streaming_data: { adaptive_formats: [high] } });
   await Promise.resolve(); await Promise.resolve();
   assert.equal(selectTvOSFormats(info, { preferVideo: false }).playback, low);
+});
+
+test('cookie import restricts exports to current YouTube root cookies and excludes header injection', () => {
+  const row = (domain, name, value, expiry = 2000000000, path = '/') => [domain, 'TRUE', path, 'TRUE', expiry, name, value].join('\t');
+  const header = cookieHeaderFromNetscape([
+    '# Netscape HTTP Cookie File',
+    '#HttpOnly_' + row('.youtube.com', 'SAPISID', 'test-secret'),
+    row('.youtube.com', 'SID', 'session', 0),
+    row('.google.com', 'OTHER', 'unrelated'),
+    row('.youtube.com.evil.test', 'OTHER', 'unrelated'),
+    row('.youtube.com', 'EXPIRED', 'old', 1),
+    row('.youtube.com', 'NESTED', 'private', 2000000000, '/other'),
+    row('.youtube.com', 'INVALID', 'one; Cookie: injected'),
+  ].join('\r\n'), { now: 100000 });
+  assert.equal(header, 'SAPISID=test-secret; SID=session');
+  assert.equal(cookieHeaderFromNetscape(row('.google.com', 'SAPISID', 'no')), '');
+  assert.equal(cookieHeaderFromNetscape(row('.youtube.com', 'SID', 'no')), '');
+  assert.throws(() => cookieHeaderFromNetscape('x'.repeat(131073)));
+});
+
+test('bounded Music lookup tolerates failed requests and returns null for stalled requests', async () => {
+  assert.equal(await boundedMusicInfo(async () => { throw Error('HTTP 400'); }), null);
+  assert.equal(await boundedMusicInfo(() => new Promise(() => {}), { timeoutMs: 10 }), null);
+});
+
+test('playback deadlines abort network work and do not cancel concurrent browsing', async () => {
+  let playbackAborted = false;
+  const signals = [];
+  const service = new YouTubeMusicService({
+    configStore: { get: () => ({ youtube: {} }) }, sessionStore: sessionStore(), cookieFile: '',
+    fetchFunction: async (url, { signal } = {}) => {
+      signals.push(signal);
+      if (url.endsWith('/search')) return {};
+      return new Promise((resolve, reject) => signal?.addEventListener('abort', () => {
+        playbackAborted = true; reject(signal.reason);
+      }, { once: true }));
+    },
+    clientFactory: async (options) => ({ session: {},
+      getBasicInfo: () => options.fetch('https://example.test/player'),
+      music: { search: async () => { await options.fetch('https://example.test/search'); return {}; } },
+    }),
+  });
+  const playback = boundedMusicInfo(() => service.resolveStream({ videoId: 'deadline-song' }), { timeoutMs: 25 });
+  // Browsing runs outside the playback deadline and must receive no new signal.
+  const browsing = service.search('test');
+  assert.equal(await playback, null);
+  assert.equal(playbackAborted, true);
+  assert.ok(signals.some((signal) => signal?.aborted));
+  assert.ok(signals.includes(undefined));
+  await browsing;
+});
+
+test('playable responses without compatible audio continue through fallback clients', async () => {
+  const calls = [];
+  const audio = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 130000,
+    url: 'https://example.test/audio', decipher: async () => 'https://example.test/audio' });
+  const service = new YouTubeMusicService({
+    configStore: { get: () => ({ youtube: {} }) }, sessionStore: sessionStore(), cookieFile: '',
+    clientFactory: async () => ({ session: {}, getBasicInfo: async (_, { client }) => {
+      calls.push(client);
+      return { basic_info: { id: 'test', title: 'Test' }, playability_status: { status: 'OK' },
+        streaming_data: { formats: [], adaptive_formats: client === 'WEB' ? [audio] : [] } };
+    } }),
+  });
+  assert.equal((await service.resolveStream({ videoId: 'fallback-song' }, { preferVideo: false })).audioBitrate, 130000);
+  assert.deepEqual(calls, ['YTMUSIC', 'ANDROID', 'WEB']);
+});
+
+test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, and survives TV failure', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ytb-cookies-test-'));
+  const cookieFile = join(dir, 'cookies.txt');
+  const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 130000,
+    url: 'https://example.test/low', decipher: async () => 'https://example.test/low' });
+  const high = { ...low, bitrate: 256000, url: 'https://example.test/high', decipher: async () => 'https://example.test/high' };
+  const info = (audio) => ({ basic_info: { id: 'test-song', title: 'Test' },
+    playability_status: { status: 'OK' }, streaming_data: { formats: [], adaptive_formats: [audio] } });
+  const factoryOptions = [], oauthClients = [];
+  let tvFails = false;
+  const writeCookies = (value) => writeFile(cookieFile, `.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\t${value}\n`);
+  const service = new YouTubeMusicService({
+    configStore: { get: () => ({ youtube: {} }) }, sessionStore: sessionStore(), cookieFile,
+    oauthLibraryService: { authStatus: () => ({ status: 'configured' }), authorizeSession: async (client) => { oauthClients.push(client); } },
+    clientFactory: async (options) => {
+      factoryOptions.push(options);
+      return { session: { player: { signature_timestamp: 123 } }, getBasicInfo: async (_, { client }) => {
+        if (options.cookie) { assert.equal(client, 'YTMUSIC'); return info(high); }
+        assert.equal(client, 'TV', 'a TV OAuth session must not request the Music client');
+        if (tvFails) throw Error('TV unavailable');
+        return info(low);
+      } };
+    },
+  });
+  try {
+    await writeCookies('test-one');
+    assert.equal((await service.resolveStream({ videoId: 'song-one' }, { preferVideo: false })).audioBitrate, 256000);
+    assert.equal(factoryOptions.filter((o) => o.cookie).length, 1);
+    assert.equal(factoryOptions[0].client_type, 'TVHTML5');
+    assert.equal(factoryOptions[1].client_type, 'WEB_REMIX');
+    assert.equal(factoryOptions[1].retrieve_innertube_config, false);
+    assert.equal(oauthClients.length, 1);
+    assert.equal(oauthClients[0].session.player.signature_timestamp, 123);
+    await writeCookies('test-two');
+    tvFails = true;
+    assert.equal((await service.resolveStream({ videoId: 'song-two' }, { preferVideo: false })).audioBitrate, 256000);
+    assert.equal(factoryOptions.filter((o) => o.cookie).length, 2);
+    assert.ok(factoryOptions.find((o) => o.cookie === 'SAPISID=test-two'));
+    await rm(cookieFile);
+    tvFails = false;
+    assert.equal((await service.resolveStream({ videoId: 'song-three' }, { preferVideo: false })).audioBitrate, 130000);
+    assert.equal(service.authStatus().hasCookie, false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('failed or unplayable cookie Music results preserve working TV audio', async () => {
+  const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 130000 });
+  const original = { streaming_data: { adaptive_formats: [low] } };
+  await upgradeMusicAudio(original, async () => ({ playability_status: { status: 'ERROR' }, streaming_data: { adaptive_formats: [{ ...low, bitrate: 256000 }] } }));
+  assert.equal(selectTvOSFormats(original, { preferVideo: false }).playback, low);
 });

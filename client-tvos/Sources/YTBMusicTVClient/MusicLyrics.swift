@@ -1,6 +1,6 @@
 import Foundation
 
-struct MusicLyricWord: Equatable {
+struct MusicLyricWord: Equatable, Sendable {
     let text: String
     let start: Double
     let end: Double
@@ -13,14 +13,14 @@ struct MusicLyricWord: Equatable {
     }
 }
 
-struct MusicLyricLine: Identifiable, Equatable {
+struct MusicLyricLine: Identifiable, Equatable, Sendable {
     let id: Int
     let time: Double?
     let text: String
     var words: [MusicLyricWord] = []
 }
 
-struct MusicLyrics: Equatable {
+struct MusicLyrics: Equatable, Sendable {
     var lines: [MusicLyricLine] = []
     var instrumental = false
     var synchronized: Bool { lines.contains { $0.time != nil } }

@@ -39,6 +39,17 @@ struct MusicPlayerScreen: View {
                     Menu {
                         Button("View artist") { openRelated("artist") }
                         Button("View album") { openRelated("album") }
+                        Button {} label: {
+                            Label(viewModel.currentAudioBitrate.map { "Audio: \(($0 + 500) / 1000) kbps" } ?? "Audio bitrate unavailable", systemImage: "waveform")
+                        }.disabled(true)
+                        Button {
+                            Task { await viewModel.likeCurrent() }
+                        } label: {
+                            Label(viewModel.isUpdatingRating ? "Saving…" : viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Liked" : "Like song",
+                                  systemImage: viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "hand.thumbsup.fill" : "hand.thumbsup")
+                        }
+                        .disabled(viewModel.isUpdatingRating || viewModel.isPreparingPlayback || viewModel.state?.currentMedia?.videoId == nil)
+                        .accessibilityHint(viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Remove this song from your YouTube likes" : "Add this song to your YouTube liked songs")
                     } label: {
                         Text(displayedMedia.map { MusicLookup.playerHeading($0) } ?? "")
                             .font(.system(size: 26, weight: .medium))
@@ -284,21 +295,7 @@ struct MusicPlayerScreen: View {
                 Button("Done") { closeQueue() }.buttonStyle(.bordered)
                     .focused($queueCloseFocused)
             }
-            Text(viewModel.currentAudioBitrate.map { "Audio: \(($0 + 500) / 1000) kbps" } ?? "Audio bitrate unavailable")
-                .font(.subheadline).foregroundStyle(.white.opacity(0.65))
             HStack(spacing: 24) {
-                Button {
-                    Task { await viewModel.likeCurrent() }
-                } label: {
-                    HStack(spacing: 10) {
-                        if viewModel.isUpdatingRating { ProgressView() }
-                        Label(viewModel.isUpdatingRating ? "Saving…" : viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Liked" : "Like song",
-                              systemImage: viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    }
-                }
-                .buttonStyle(.bordered).tint(assets.accentColor)
-                .disabled(viewModel.isUpdatingRating || viewModel.state?.currentMedia?.videoId == nil)
-                .accessibilityHint(viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Remove this song from your YouTube likes" : "Add this song to your YouTube liked songs")
                 if viewModel.currentStreamHasVideo {
                     Button(videoVisible ? "Hide music video" : "Show music video", systemImage: "video") {
                         videoVisible.toggle(); closeQueue()
