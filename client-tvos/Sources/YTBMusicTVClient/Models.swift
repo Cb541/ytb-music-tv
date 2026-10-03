@@ -216,3 +216,25 @@ func filteredBrowseSections(_ sections: [MediaSection], category: String, query:
         return items.isEmpty ? nil : MediaSection(id: section.id, title: section.title, items: items)
     }
 }
+
+struct PlaybackTiming: Equatable {
+    var durationMs: Int
+    var endTimeMs: Int?
+
+    static func resolve(metadataMs: Int, streamSeconds: Double, hasVideo: Bool) -> PlaybackTiming {
+        let metadata = max(0, metadataMs)
+        let milliseconds = streamSeconds * 1000
+        let stream = milliseconds.isFinite && milliseconds > 0 && milliseconds < Double(Int.max)
+            ? Int(milliseconds) : 0
+        guard metadata > 0 else { return PlaybackTiming(durationMs: stream, endTimeMs: nil) }
+        // Some AAC streams expose an inflated container timeline with a silent
+        // tail. Use the song metadata only for a clearly oversized audio timeline.
+        // Small encoder differences and the actual length of videos remain intact.
+        let inflatedAudio = !hasVideo && stream > metadata &&
+            Double(stream - metadata) >= max(10_000, Double(metadata) * 0.5)
+        if inflatedAudio || (!hasVideo && stream == 0) {
+            return PlaybackTiming(durationMs: metadata, endTimeMs: metadata)
+        }
+        return PlaybackTiming(durationMs: stream > 0 ? stream : metadata, endTimeMs: nil)
+    }
+}

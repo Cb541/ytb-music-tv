@@ -27,7 +27,7 @@ enum MusicLookup {
     static func cleaned(_ value: String) -> String {
         value.replacingOccurrences(of: #"(?i)\s*\([^)]*(official|video|audio|lyrics?|visualizer|4k|hd)[^)]*\)"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s*\[[^\]]*(official|video|audio|lyrics?|visualizer|4k|hd)[^\]]*\]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)\s*-\s*Topic$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\s*[-–—]\s*Topic$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -74,6 +74,15 @@ enum MusicLookup {
             .replacingOccurrences(of: "&", with: " and ")
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
             .split(separator: " ").joined(separator: " ")
+    }
+
+    // Featuring credits vary across YouTube and Apple catalogs. Ignore only
+    // those credits for cover matching; live/remix/version labels still matter.
+    static func artworkTitle(_ value: String) -> String {
+        cleaned(value)
+            .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]+[\)\]]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\s+(?:feat\.?|ft\.?|featuring)\s+[^\(\[]+$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func primaryArtist(_ value: String) -> String {
@@ -291,7 +300,7 @@ enum MusicLookup {
             let albumNamedResponse = object["track"] == nil && object["trackName"] == nil &&
                 album != nil && albumKey(foundTitle ?? "") == albumKey(album ?? "") &&
                 (object["albumId"] != nil || object["collectionId"] != nil)
-            if let foundTitle, !foundTitle.isEmpty, normalized(foundTitle) != normalized(title), !albumNamedResponse { continue }
+            if let foundTitle, !foundTitle.isEmpty, normalized(artworkTitle(foundTitle)) != normalized(artworkTitle(title)), !albumNamedResponse { continue }
             if foundTitle == nil && foundAlbum == nil { continue }
             if foundTitle == nil, let album, !album.isEmpty, let foundAlbum,
                albumKey(album) != albumKey(foundAlbum) { continue }
@@ -306,20 +315,26 @@ enum MusicLookup {
         return nil
     }
 
-    static func catalogAlbum(_ data: Data, title: String, artist: String, album: String?, durationMs: Int) -> MusicCatalogAlbum? {
+    static func catalogAlbums(_ data: Data, title: String, artist: String, album: String?, durationMs: Int) -> [MusicCatalogAlbum] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let records = object["results"] as? [[String: Any]] else { return nil }
-        let compatible = records.filter { record in
-            normalized(record["trackName"] as? String ?? "") == normalized(title) &&
-            normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)) &&
-            (durationMs <= 0 || record["trackTimeMillis"] == nil ||
-             abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000) &&
-            (album == nil || albumKey(record["collectionName"] as? String ?? "") == albumKey(album ?? ""))
+              let records = object["results"] as? [[String: Any]] else { return [] }
+        var seen = Set<String>()
+        return records.compactMap { record in
+            guard normalized(artworkTitle(record["trackName"] as? String ?? "")) == normalized(artworkTitle(title)),
+                  normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)),
+                  durationMs <= 0 || record["trackTimeMillis"] == nil ||
+                    abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000,
+                  album == nil || albumKey(record["collectionName"] as? String ?? "") == albumKey(album ?? ""),
+                  let name = record["collectionName"] as? String, !name.isEmpty else { return nil }
+            let id = (record["collectionId"] as? NSNumber)?.stringValue
+            let page = validURL(record["collectionViewUrl"]).flatMap { $0.host == "music.apple.com" ? $0 : nil }
+            guard seen.insert(id ?? page?.absoluteString ?? albumKey(name)).inserted else { return nil }
+            return MusicCatalogAlbum(name: name, id: id, page: page)
         }
-        guard let record = compatible.first, let name = record["collectionName"] as? String else { return nil }
-        let id = (record["collectionId"] as? NSNumber)?.stringValue
-        let page = validURL(record["collectionViewUrl"]).flatMap { $0.host == "music.apple.com" ? $0 : nil }
-        return MusicCatalogAlbum(name: name, id: id, page: page)
+    }
+
+    static func catalogAlbum(_ data: Data, title: String, artist: String, album: String?, durationMs: Int) -> MusicCatalogAlbum? {
+        catalogAlbums(data, title: title, artist: artist, album: album, durationMs: durationMs).first
     }
 
     static func discoveredAlbum(_ data: Data, title: String, artist: String, durationMs: Int) -> String? {
@@ -418,7 +433,7 @@ enum MusicLookup {
     }
 
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
-        let title = cleaned(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
+        let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
         let album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
         let durationMs = media.durationMs, fallback = media.artworkUrl
@@ -432,9 +447,20 @@ enum MusicLookup {
                     if index > 0 { try? await Task.sleep(nanoseconds: 1_500_000_000) }
                     guard !Task.isCancelled,
                           let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": country, "limit": "12"]),
-                          let data = try? await fetch(url), !Task.isCancelled,
-                          let catalog = catalogAlbum(data, title: title, artist: artist, album: album, durationMs: durationMs) else { return nil }
-                    return await catalogArtwork(catalog, country: country, title: title, artist: artist, durationMs: durationMs, fallback: fallback)
+                          let data = try? await fetch(url), !Task.isCancelled else { return nil }
+                    // A single may appear on several legitimate catalog releases.
+                    // Try more than the first hit, with a bound on network fan-out.
+                    let catalogs = catalogAlbums(data, title: title, artist: artist, album: album, durationMs: durationMs)
+                    return await withTaskGroup(of: MusicArtworkResult?.self) { matches in
+                        for catalog in catalogs.prefix(3) {
+                            matches.addTask {
+                                guard !Task.isCancelled else { return nil }
+                                return await catalogArtwork(catalog, country: country, title: title, artist: artist, durationMs: durationMs, fallback: fallback)
+                            }
+                        }
+                        for await result in matches { if let result { matches.cancelAll(); return result } }
+                        return nil
+                    }
                 }
             }
             for await result in group {

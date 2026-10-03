@@ -336,3 +336,31 @@ Live validation: m8tec returned square motion for Coldplay's Moon Music. Apple's
 Verification: 68 server tests pass; Swift 6.2.3 Foundation model/lyric tests, live provider parsing, and syntax parsing of all Swift files pass. The full tvOS SDK compile and device focus/navigation verification run after the GitHub updater. Apply the server updater and client updater, then sideload only the resulting single IPA. Existing local playback cookies and OAuth authorization are preserved.
 
 Provider contracts: https://github.com/AlFarrizi-Studio/LiriQo, https://github.com/ibratabian17/LyricsPlus/blob/cookie/docs/endpoints.md, https://github.com/m8tec/apple-music-animated-artworks, https://github.com/boidushya/artwork.boidu.dev, https://github.com/NopXx/apple-music-artwork-search.
+
+## v63: inflated audio duration and silent tail
+
+Audio-only streams with a container duration at least 50% (and at least ten seconds) longer than the known song duration now use the song duration for progress, seeking and crossfade timing. AVPlayerItem.forwardPlaybackEndTime ends the inflated timeline at that same point, allowing the existing end observer to advance or repeat rather than wait through a silent tail. The boundary is also applied to prefetched crossfade decks and refreshed fallback items. Unknown audio duration initially uses the metadata endpoint; finite normal duration clears that provisional limit. Small encoder differences, genuinely shorter streams, and video timelines retain their actual stream duration. Without song metadata, the finite stream duration remains the fallback.
+
+Replacing items or promoting a crossfade deck invalidates the previous periodic-observer generation, so delayed callbacks cannot write an old clock into a new song. Timing refresh avoids publishing an unchanged duration every 50 ms.
+
+Swift Foundation regression tests cover a doubled four-minute timeline, unknown duration, small encoder padding, shorter streams, video length, missing metadata and non-finite/overflowing values. These tests and Swift syntax parsing pass locally. The full tvOS build and the originally reported silent-tail symptom require the new IPA to be built and checked on-device. This is a client-only update; the v62 server and cookies remain in use.
+
+## v64: global Search recovery and animated-cover matching
+
+Submitting a nonempty query from an artist or album page now starts a global search in the selected category. The artist/album page flag no longer blocks the request, and typing a new global query no longer filters the old browse page into an apparent empty result. With an empty query, category tabs still filter the browsed page. The last successful global query and category are retained when returning from related pages or reopening Search. Submission captures the text/category before launching its task; Back invalidates pending search results so an older response cannot replace the restored page. Playlist-local and queue search remain separate.
+
+Artwork title matching ignores parenthesized, bracketed and trailing feat./ft./featuring credits, including differences between a YouTube title and Apple's track title. This normalization is confined to artwork matching and queries; lyric recording checks remain in place. Unicode Topic suffixes are removed alongside the existing ASCII suffix. Wrong artists, different titles, live/remix versions and incompatible catalog durations are still rejected. Known album names continue to restrict catalog matches.
+
+The catalog lookup deduplicates matching album IDs and tries up to three compatible releases in each existing US/GB lookup rather than stopping at the first catalog record. Each release can use m8tec, Boidu, NopXx and Apple's own matching public album page. The direct provider requests continue in parallel, and the first valid animation cancels outstanding work. Missing/failed providers cannot cache a static-only answer, and audio playback does not wait for artwork.
+
+Live checks found that both Boidu and NopXx return motion for Post Malone's rockstar (feat. 21 Savage), which the prior exact title comparison rejected for Rockstar. The updated Swift parser accepts both real replies for Rockstar. The catalog recovers beerbongs & bentleys as the first matching album and additional compatible releases. The m8tec motion manifest and Boidu motion URL both returned HTTP 200.
+
+Swift Foundation tests pass for featuring-credit variants, wrong artists, live/remix titles, duplicate catalog releases, album/duration restrictions, failure of one provider while another succeeds, and existing playback/lyric timing. Syntax parsing of all Swift files and Foundation/API type checking also pass. The full tvOS SDK compile runs through the updater's GitHub build; Search focus/navigation and animated playback still require checking with the new IPA on Apple TV. This client-only cumulative update includes v63's duration/silent-tail correction and keeps the v62 server, high-quality audio setup and approved icon.
+
+## v65: compact right controls and Mix in the artist menu
+
+Start song mix moves from the right playback-control row to the top-left artist/album menu, following the Like action. It uses the same mix request and current-song seed, indicates loading in its label, exposes the active state to accessibility, and is disabled while loading, preparing playback or lacking a playable video ID. Queue retains its existing mix/loading indicators.
+
+The right row now contains Lyrics, Queue and Crossfade. Its spacing is zero and Lyrics/Queue use two points of horizontal padding per side instead of eight, bringing their icons toward Crossfade without changing glyph size. Crossfade remains the final trailing item with its existing width, scale, trailing padding and vertical offset, so its position is preserved as the row becomes narrower. Left controls and all other player layout remain unchanged.
+
+All Swift sources pass syntax parsing. This small UI adjustment adds no new model tests; the full tvOS SDK build runs through the updater, and spacing/focus and menu actions require verification on Apple TV. The cumulative client-only updater includes the preceding Search, artwork and duration fixes. No server update is needed.

@@ -85,6 +85,20 @@ enum PlaybackAndLyricsTests {
         let catalog = Data(#"{"results":[{"trackName":"Other","artistName":"Artist","collectionName":"Wrong"},{"trackName":"Song","artistName":"Artist","collectionName":"Recovered Album","trackTimeMillis":180000}]}"#.utf8)
         precondition(MusicLookup.discoveredAlbum(catalog, title: "Song", artist: "Artist", durationMs: 181000) == "Recovered Album")
         precondition(MusicLookup.discoveredAlbum(catalog, title: "Song", artist: "Artist", durationMs: 220000) == nil)
+        // YouTube omits or spells out credits that Apple puts in parentheses.
+        let rockstarMotion = Data(#"{"name":"rockstar (feat. 21 Savage)","artist":"Post Malone","albumId":1373504837,"videoUrl":"https://mvod.itunes.apple.com/rockstar.mp4"}"#.utf8)
+        for title in ["Rockstar", "rockstar ft. 21 Savage", "rockstar (featuring 21 Savage)", "rockstar [feat. 21 Savage]"] {
+            precondition(MusicLookup.artworkResult(rockstarMotion, title: title, artist: "Post Malone – Topic", album: nil, fallback: nil)?.motion != nil)
+        }
+        for title in ["Rockstar (Live)", "Rockstar (Remix)", "Rockstar - Acoustic", "Different song"] {
+            precondition(MusicLookup.artworkResult(rockstarMotion, title: title, artist: "Post Malone", album: nil, fallback: nil) == nil)
+        }
+        precondition(MusicLookup.artworkResult(rockstarMotion, title: "Rockstar", artist: "Other Artist", album: nil, fallback: nil) == nil)
+        let multipleReleases = Data(#"{"results":[{"trackName":"rockstar (feat. 21 Savage)","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"The Diamond Collection","collectionId":2,"trackTimeMillis":218146},{"trackName":"rockstar (Live)","artistName":"Post Malone","collectionName":"Live","collectionId":3,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Other Artist","collectionName":"Other","collectionId":4,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"Wrong recording length","collectionId":5,"trackTimeMillis":418146}]}"#.utf8)
+        let releases = MusicLookup.catalogAlbums(multipleReleases, title: "Rockstar ft. 21 Savage", artist: "Post Malone", album: nil, durationMs: 218000)
+        precondition(releases.map(\.id) == ["1", "2"])
+        precondition(MusicLookup.catalogAlbums(multipleReleases, title: "Rockstar", artist: "Post Malone", album: "beerbongs & bentleys", durationMs: 218000).map(\.id) == ["1"])
+        precondition(MusicLookup.catalogAlbums(multipleReleases, title: "Rockstar", artist: "Post Malone", album: "Unknown album", durationMs: 218000).isEmpty)
         let wordTimed = MusicLookup.parseLyricsPlus(Data(#"{"type":"WORD","lyrics":[{"time":1000,"duration":3000,"text":"Hello world","syllabus":[{"text":"Hello ","time":1000,"duration":900},{"text":"world","time":2100,"duration":1200},{"text":"Adlib","time":1500,"duration":500,"isBackground":true}]}]}"#.utf8))
         precondition(wordTimed.wordSynchronized)
         precondition(wordTimed.lines[0].words.count == 2)
@@ -127,6 +141,12 @@ enum PlaybackAndLyricsTests {
         precondition(cancelledSlowProvider)
         let noArtwork = await MusicLookup.firstArtwork(from: [fastProvider], title: "Song", artist: "Other Artist", album: "Album", fallback: nil) { _ in m8tec }
         precondition(noArtwork == nil)
+        let providerFallback = await MusicLookup.firstArtwork(from: [slowProvider, fastProvider], title: "Rockstar", artist: "Post Malone", album: nil, fallback: nil) { url in
+            if url == fastProvider { throw URLError(.badServerResponse) }
+            try await Task.sleep(nanoseconds: 20_000_000)
+            return rockstarMotion
+        }
+        precondition(providerFallback?.motion?.lastPathComponent == "rockstar.mp4")
         let searchable = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"match","title":"Café Song","artist":"Artist","album":"Album"}"#.utf8))
         precondition(searchable.matchesSearch("CAFE") && searchable.matchesSearch("artist") && searchable.matchesSearch("album"))
         precondition(searchable.matchesSearch(" ") && !searchable.matchesSearch("missing"))
@@ -192,6 +212,23 @@ enum PlaybackAndLyricsTests {
         precondition(MusicLookup.applePageArtwork(Data("broken page".utf8), albumID: "123", fallback: nil) == nil)
         let exactArtwork = Data(#"{"name":"Album","artist":"Artist","albumId":123,"animated":"https://mvod.itunes.apple.com/square.m3u8"}"#.utf8)
         precondition(MusicLookup.artworkResult(exactArtwork, title: "Song", artist: "Artist", album: "Album", fallback: nil)?.motion != nil)
+        let doubledTimeline = PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 480, hasVideo: false)
+        precondition(doubledTimeline.durationMs == 240000 && doubledTimeline.endTimeMs == 240000)
+        let unknownTimeline = PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: .nan, hasVideo: false)
+        precondition(unknownTimeline == doubledTimeline)
+        let encoderPadding = PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 241.25, hasVideo: false)
+        precondition(encoderPadding.durationMs == 241250 && encoderPadding.endTimeMs == nil)
+        let shorterStream = PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 230, hasVideo: false)
+        precondition(shorterStream.durationMs == 230000 && shorterStream.endTimeMs == nil)
+        let fullVideo = PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 480, hasVideo: true)
+        precondition(fullVideo.durationMs == 480000 && fullVideo.endTimeMs == nil)
+        let noMetadata = PlaybackTiming.resolve(metadataMs: 0, streamSeconds: 480, hasVideo: false)
+        precondition(noMetadata.durationMs == 480000 && noMetadata.endTimeMs == nil)
+        for invalid in [Double.nan, .infinity, -.infinity, -1, Double.greatestFiniteMagnitude] {
+            precondition(PlaybackTiming.resolve(metadataMs: 0, streamSeconds: invalid, hasVideo: false).durationMs == 0)
+        }
+        // The same decision must survive a refreshed URL or promoted crossfade deck.
+        precondition(PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 480, hasVideo: false) == doubledTimeline)
         print("Playback decoding, lyric timing, and lookup metadata tests passed")
     }
 }

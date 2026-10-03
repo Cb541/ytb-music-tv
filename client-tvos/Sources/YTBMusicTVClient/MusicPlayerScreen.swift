@@ -50,6 +50,15 @@ struct MusicPlayerScreen: View {
                         }
                         .disabled(viewModel.isUpdatingRating || viewModel.isPreparingPlayback || viewModel.state?.currentMedia?.videoId == nil)
                         .accessibilityHint(viewModel.state?.currentMedia?.likeStatus == "LIKE" ? "Remove this song from your YouTube likes" : "Add this song to your YouTube liked songs")
+                        Button {
+                            noteControlActivity()
+                            viewModel.startMix()
+                        } label: {
+                            Label(viewModel.isLoadingMix ? "Finding similar songs…" : "Start song mix", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                        .disabled(viewModel.isLoadingMix || viewModel.isPreparingPlayback || viewModel.state?.currentMedia?.videoId == nil)
+                        .accessibilityValue(viewModel.isMixActive ? "On" : "Off")
+                        .accessibilityHint("Find similar songs for the current song")
                     } label: {
                         Text(displayedMedia.map { MusicLookup.playerHeading($0) } ?? "")
                             .font(.system(size: 26, weight: .medium))
@@ -203,15 +212,10 @@ struct MusicPlayerScreen: View {
                 .padding(.leading, -43)
                 .offset(y: 11)
                 Spacer()
-                HStack(spacing: 4) {
+                // The trailing Crossfade menu anchors this row. Compact the
+                // preceding buttons toward it without changing that anchor.
+                HStack(spacing: 0) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
-                    control("dot.radiowaves.left.and.right", label: "Mix", selected: viewModel.isMixActive, compact: true, boxless: true) {
-                        viewModel.startMix()
-                    }
-                    .disabled(viewModel.isLoadingMix || displayedMedia?.videoId == nil)
-                    .overlay {
-                        if viewModel.isLoadingMix { ProgressView().scaleEffect(0.6).allowsHitTesting(false) }
-                    }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
                         Picker("Crossfade", selection: $crossfadeSeconds) {
@@ -257,7 +261,7 @@ struct MusicPlayerScreen: View {
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? nil : 4))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 2 : 4))
         .scaleEffect(compact ? 0.9 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)

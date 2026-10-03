@@ -69,6 +69,7 @@ final class PlayerViewModel: ObservableObject {
     let playbackProgress = PlaybackProgress()
 
     private var client: APIClient?
+    private var timeObservationGeneration = UUID()
     private var timeObserver: Any?
     private var timeObserverPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
@@ -100,6 +101,8 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var homePlaylist: MediaItem?
     @Published private(set) var searchPlaylist: MediaItem?
     @Published private(set) var searchPageTitle: String?
+    @Published private(set) var searchQuery = ""
+    @Published private(set) var searchCategory = "all"
     private var homePlaylistHistory: [MediaItem?] = []
     private var searchPlaylistHistory: [MediaItem?] = []
     private var searchTitleHistory: [String?] = []
@@ -266,6 +269,7 @@ final class PlayerViewModel: ObservableObject {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let client, !trimmedQuery.isEmpty else {
             searchSections = []
+            searchQuery = ""; searchCategory = "all"
             searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchTitleHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             isSearching = false
             return
@@ -281,6 +285,7 @@ final class PlayerViewModel: ObservableObject {
             let sections = try await client.search(query: trimmedQuery, type: type).sections
             guard revision == searchRevision else { return }
             searchSections = applyingKnownRatings(to: sections)
+            searchQuery = trimmedQuery; searchCategory = type
             searchNavigationHistory.removeAll(); searchPlaylistHistory.removeAll(); searchTitleHistory.removeAll(); searchPlaylist = nil; searchPageTitle = nil
             errorMessage = nil
         } catch {
@@ -695,6 +700,8 @@ final class PlayerViewModel: ObservableObject {
     @discardableResult
     func navigateBackSearch() -> Bool {
         browseRequestID = UUID()
+        searchRevision &+= 1
+        isSearching = false
         guard let previous = searchNavigationHistory.popLast() else { return false }
         searchSections = previous
         searchPlaylist = searchPlaylistHistory.popLast() ?? nil
@@ -968,7 +975,9 @@ final class PlayerViewModel: ObservableObject {
 
     private func replacePlayerItem(item: AVPlayerItem) {
         cancelCrossfade()
+        removePlaybackTimeObserver()
         player.pause()
+        refreshPlaybackTiming(for: item)
         player.replaceCurrentItem(with: item)
         installStatusObserver(for: item)
         installEndObserver(for: item)
@@ -997,15 +1006,32 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    private func removePlaybackTimeObserver() {
+        timeObservationGeneration = UUID()
+        if let timeObserver { timeObserverPlayer?.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+        timeObserverPlayer = nil
+    }
+
+    private func refreshPlaybackTiming(for item: AVPlayerItem) {
+        let timing = PlaybackTiming.resolve(metadataMs: state?.currentMedia?.durationMs ?? 0,
+            streamSeconds: CMTimeGetSeconds(item.duration), hasVideo: currentStreamHasVideo)
+        if playbackDurationMs != timing.durationMs { playbackDurationMs = timing.durationMs }
+        let end = timing.endTimeMs.map { CMTime(value: Int64($0), timescale: 1000) } ?? .invalid
+        if item.forwardPlaybackEndTime != end { item.forwardPlaybackEndTime = end }
+    }
+
     private func installTimeObserverIfNeeded() {
         guard timeObserver == nil else { return }
         timeObserverPlayer = player
+        timeObservationGeneration = UUID()
+        let generation = timeObservationGeneration
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.05, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.timeObservationGeneration == generation else { return }
                 let seconds = CMTimeGetSeconds(time)
                 guard seconds.isFinite else { return }
 
@@ -1013,10 +1039,7 @@ final class PlayerViewModel: ObservableObject {
                 let currentMs = max(0, Int(seconds * 1000))
                 self.playbackTimeMs = currentMs
 
-                let durationSeconds = CMTimeGetSeconds(self.player.currentItem?.duration ?? .invalid)
-                if durationSeconds.isFinite, durationSeconds > 0 {
-                    self.playbackDurationMs = Int(durationSeconds * 1000)
-                }
+                if let item = self.player.currentItem { self.refreshPlaybackTiming(for: item) }
                 self.maybeBeginCrossfade()
                 if currentMs / 1000 != previousSecond { self.updateNowPlayingInfo() }
             }
@@ -1046,10 +1069,7 @@ final class PlayerViewModel: ObservableObject {
                 guard let self, self.player.currentItem === item else { return }
                 switch item.status {
                 case .readyToPlay:
-                    let durationSeconds = CMTimeGetSeconds(item.duration)
-                    if durationSeconds.isFinite, durationSeconds > 0 {
-                        self.playbackDurationMs = Int(durationSeconds * 1000)
-                    }
+                    self.refreshPlaybackTiming(for: item)
                     if self.crossfadeTask == nil { self.player.volume = 1 }
                 case .failed:
                     if self.retryFallbackPlayback(failedItem: item) {
@@ -1492,8 +1512,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func promoteCrossfadePlayer(_ incoming: AVPlayer, outgoing: AVPlayer, cache: NextPlaybackCache) {
-        if let timeObserver { timeObserverPlayer?.removeTimeObserver(timeObserver); self.timeObserver = nil }
-        timeObserverPlayer = nil
+        removePlaybackTimeObserver()
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
         itemStatusObserver?.invalidate()
         timeControlObserver?.invalidate()
@@ -1543,7 +1562,11 @@ final class PlayerViewModel: ObservableObject {
             let isPlayable = try await asset.load(.isPlayable)
             guard isPlayable else { return nil }
             _ = try? await asset.load(.duration)
-            return AVPlayerItem(asset: asset)
+            let item = AVPlayerItem(asset: asset)
+            let timing = PlaybackTiming.resolve(metadataMs: resolved.media.durationMs,
+                streamSeconds: CMTimeGetSeconds(item.duration), hasVideo: resolved.hasVideo)
+            if let end = timing.endTimeMs { item.forwardPlaybackEndTime = CMTime(value: Int64(end), timescale: 1000) }
+            return item
         } catch {
             return nil
         }

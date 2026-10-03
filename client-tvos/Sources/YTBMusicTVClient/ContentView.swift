@@ -814,17 +814,21 @@ private struct SearchView: View {
                 Text("Playlists").tag("playlist")
             }
             .pickerStyle(.segmented)
-            .onChange(of: searchType) { if viewModel.searchPageTitle == nil && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { runSearch() } }
+            .onChange(of: searchType) {
+                let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                // Restoring the last global query should not submit it twice.
+                if viewModel.searchPageTitle == nil && trimmed == viewModel.searchQuery && searchType == viewModel.searchCategory { return }
+                runSearch()
+            }
             if searchType == "playlist" { Text("Public and community playlists").font(.caption).foregroundStyle(.secondary) }
             MediaSectionList(sections: visibleSections, l10n: l10n, select: select, playlist: viewModel.searchPlaylist, viewModel: viewModel)
             if visibleSections.isEmpty && !viewModel.isSearching && viewModel.searchPageTitle != nil {
                 Text("No matching items on this page.").foregroundStyle(.secondary)
             }
         }
-        .onChange(of: viewModel.searchPageTitle) {
-            query = ""
-            searchType = "all"
-        }
+        .onAppear { restoreSearchContext() }
+        .onChange(of: viewModel.searchPageTitle) { restoreSearchContext() }
         .onExitCommand {
             if !viewModel.navigateBackSearch() {
                 returnToMenu()
@@ -833,12 +837,20 @@ private struct SearchView: View {
     }
 
     private var visibleSections: [MediaSection] {
-        viewModel.searchPageTitle == nil ? viewModel.searchSections : filteredBrowseSections(viewModel.searchSections, category: searchType, query: query)
+        viewModel.searchPageTitle == nil ? viewModel.searchSections : filteredBrowseSections(viewModel.searchSections, category: searchType, query: "")
+    }
+
+    private func restoreSearchContext() {
+        query = viewModel.searchPageTitle == nil ? viewModel.searchQuery : ""
+        searchType = viewModel.searchPageTitle == nil ? viewModel.searchCategory : "all"
     }
 
     private func runSearch() {
-        guard viewModel.searchPageTitle == nil else { return }
-        Task { await viewModel.search(query, type: searchType) }
+        let submittedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedType = searchType
+        guard !submittedQuery.isEmpty else { return }
+        // A submitted query is always global, including from an artist/album page.
+        Task { await viewModel.search(submittedQuery, type: submittedType) }
     }
 }
 
