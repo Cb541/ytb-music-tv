@@ -23,9 +23,10 @@ final class MusicPresentationAssets: ObservableObject {
     private var artworkCache: [String: MusicArtworkResult] = [:]
     private var generation = UUID()
     private var staticCatalogAttempted = false
+    private var hasCatalogStill = false
 
     func load(_ media: MediaItem?, animated: Bool) async {
-        let token = UUID(); generation = token; staticCatalogAttempted = false
+        let token = UUID(); generation = token; staticCatalogAttempted = false; hasCatalogStill = false
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         // Keep the previous backdrop until a new cover arrives; clearing it
         // would expose a colored fallback during every song transition.
@@ -110,11 +111,11 @@ final class MusicPresentationAssets: ObservableObject {
         guard forceCatalog || min(artworkImage?.cgImage?.width ?? 0, artworkImage?.cgImage?.height ?? 0) < 1000 else { return }
         staticCatalogAttempted = true
         if let catalog = await MusicLookup.catalogStill(for: media) {
-            await loadImage(catalog, token: token)
+            await loadImage(catalog, token: token, verifiedCatalog: true)
         }
     }
 
-    private func loadImage(_ url: URL?, token: UUID) async {
+    private func loadImage(_ url: URL?, token: UUID, verifiedCatalog: Bool = false) async {
         guard let url else { return }
         let large = MusicLookup.highResolutionStillURL(url)
         let candidates = large == url ? [url] : [large, url]
@@ -122,10 +123,12 @@ final class MusicPresentationAssets: ObservableObject {
             guard generation == token, !Task.isCancelled else { return }
             guard let data = try? await MusicLookup.fetch(candidate, timeout: 5), let image = UIImage(data: data),
                   generation == token, !Task.isCancelled else { continue }
-            // A small provider preview must never replace a sharper still cover.
-            let pixels = (image.cgImage?.width ?? 0) * (image.cgImage?.height ?? 0)
-            let existing = (artworkImage?.cgImage?.width ?? 0) * (artworkImage?.cgImage?.height ?? 0)
-            guard pixels >= existing else { return }
+            // Pixel dimensions alone cannot distinguish an enlarged thumbnail
+            // from the verified album master. Prefer a sharp matching catalog cover.
+            guard MusicLookup.shouldReplaceStill(width: image.cgImage?.width ?? 0, height: image.cgImage?.height ?? 0,
+                currentWidth: artworkImage?.cgImage?.width ?? 0, currentHeight: artworkImage?.cgImage?.height ?? 0,
+                currentIsCatalog: hasCatalogStill, candidateIsCatalog: verifiedCatalog) else { return }
+            hasCatalogStill = verifiedCatalog && min(image.cgImage?.width ?? 0, image.cgImage?.height ?? 0) >= 1000
             artworkImage = image
             backgroundImage = image
             colors = Self.palette(image)

@@ -281,7 +281,8 @@ enum MusicLookup {
         let base = cleaned(value)
             .replacingOccurrences(of: #"(?i)\s*[\(\[][^\)\]]*(deluxe|expanded|remaster|anniversary|edition)[^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s*-\s*(deluxe|expanded|remaster|anniversary).*"#, with: "", options: .regularExpression)
-        return normalized(base)
+        let release = base.replacingOccurrences(of: #"(?i)\s*(?:[-–—]\s*|\(\s*)(?:EP|Single)\)?\s*$"#, with: "", options: .regularExpression)
+        return normalized(release)
     }
 
     static func motionURL(_ value: Any?) -> URL? {
@@ -483,6 +484,12 @@ enum MusicLookup {
             requests.append(url)
         }
         return requests
+    }
+
+    static func shouldReplaceStill(width: Int, height: Int, currentWidth: Int, currentHeight: Int, currentIsCatalog: Bool, candidateIsCatalog: Bool) -> Bool {
+        if candidateIsCatalog && min(width, height) >= 1000 { return true }
+        if currentIsCatalog { return false }
+        return width * height >= currentWidth * currentHeight
     }
 
     static func highResolutionStillURL(_ url: URL) -> URL {
