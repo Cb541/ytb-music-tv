@@ -129,7 +129,7 @@ export const createApiRouter = ({
         const videoId = resolved.videoId;
         return json(res, 200, {
           ...resolved,
-          media: { ...resolved.media, id: videoId, videoId,
+          media: { ...resolved.media, id: videoId, videoId, type: canonical.type ?? resolved.media?.type,
             title: canonical.title || resolved.media?.title,
             artist: canonical.artist || resolved.media?.artist,
             album: canonical.album ?? resolved.media?.album,
