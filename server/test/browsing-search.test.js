@@ -172,3 +172,13 @@ test('official song keeps originals when unavailable, mismatched, or search fail
   const next = { ...original, videoId: 'ccccccccccc' };
   assert.equal(await api.officialSong(next), next);
 });
+
+test('video matching tolerates intros and VEVO authors but preserves live versions', async () => {
+  const api = service();
+  const official = { videoId: 'bbbbbbbbbbb', type: 'song', title: 'Song', artist: 'Artist', durationMs: 180000, albumBrowseId: 'MPRalbum' };
+  api.search = async () => ({ sections: [{ items: [official] }] });
+  const video = { videoId: 'aaaaaaaaaaa', type: 'video', title: 'Artist - Song (Official Music Video)', artist: 'ArtistVEVO', durationMs: 225000 };
+  assert.equal(await api.officialSong(video), official);
+  const live = { ...video, videoId: 'ccccccccccc', title: 'Song (Live)' };
+  assert.equal(await api.officialSong(live), live);
+});

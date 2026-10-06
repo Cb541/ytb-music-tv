@@ -877,10 +877,20 @@ final class PlayerViewModel: ObservableObject {
     ) async throws -> ResolvedPlaybackMedia {
         if media.videoId != nil {
             let needsSongLookup = media.type != "song" || media.albumBrowseId == nil
-            let canonical = needsSongLookup ? ((try? await client.officialSong(media: media)) ?? media) : media
-            let redirected = canonical.videoId != media.videoId
-            let preferVideo = redirected || media.type == "video" ? false : config?.playback.preferVideo
-            let resolved = try await client.resolve(mediaId: canonical.videoId ?? media.videoId!, preferVideo: preferVideo)
+            let resolved: ResolvedStream
+            let canonical: MediaItem
+            let preferVideo: Bool?
+            if needsSongLookup {
+                // Match and resolve audio together. Never apply only the cover metadata.
+                resolved = try await client.resolveSong(media: media)
+                canonical = resolved.media ?? media
+                preferVideo = false
+            } else {
+                canonical = media
+                preferVideo = config?.playback.preferVideo
+                resolved = try await client.resolve(mediaId: media.videoId!, preferVideo: preferVideo)
+            }
+            let redirected = resolved.videoId != media.videoId
             var merged = merge(canonical, with: resolved.media)
             // Keep the playlist slot stable while using the official recording for playback and ratings.
             merged.id = media.id

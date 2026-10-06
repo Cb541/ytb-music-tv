@@ -119,6 +119,30 @@ export const createApiRouter = ({
       return json(res, 200, withSectionPlaybackUrls(result, baseUrl), corsHeaders());
     }
 
+    if (pathname === '/api/resolve-song') {
+      if (req.method !== 'POST') return methodNotAllowed(res);
+      const body = await readJson(req);
+      try {
+        const canonical = await youtubeService.officialSong(body.media);
+        const options = { preferVideo: false, quality: 'best' };
+        const resolved = await youtubeService.resolveStream(canonical, options);
+        const videoId = resolved.videoId;
+        return json(res, 200, {
+          ...resolved,
+          media: { ...resolved.media, id: videoId, videoId,
+            title: canonical.title || resolved.media?.title,
+            artist: canonical.artist || resolved.media?.artist,
+            album: canonical.album ?? resolved.media?.album,
+            albumBrowseId: canonical.albumBrowseId ?? resolved.media?.albumBrowseId,
+            artistBrowseId: canonical.artistBrowseId ?? resolved.media?.artistBrowseId,
+            artworkUrl: canonical.artworkUrl ?? resolved.media?.artworkUrl },
+          proxyUrl: publicStreamUrl(baseUrl, videoId, options),
+          adaptiveVideoProxyUrl: null,
+          adaptiveAudioProxyUrl: null,
+        }, corsHeaders());
+      } catch (error) { return streamResolveFailure(res, error); }
+    }
+
     if (pathname === '/api/media/official-song') {
       if (req.method !== 'POST') return methodNotAllowed(res);
       const body = await readJson(req);

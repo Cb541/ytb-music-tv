@@ -89,11 +89,14 @@ export class YouTubeMusicService {
     const promise = (async () => {
       const result = await boundedMusicInfo(() => this.search(
         [musicTitle(media.title, primaryMusicArtist(media.artist)), primaryMusicArtist(media.artist)].join(' '),
-        { type: 'song' }), { timeoutMs: 2500 });
+        { type: 'song' }), { timeoutMs: 5000 });
       const candidates = result?.sections?.flatMap((section) => section.items) ?? [];
       // Require song catalog metadata and exact recording identity. Never choose a fuzzy first result.
+      const source = { ...media };
+      // Videos can have long intros/outros; duration is not recording identity here.
+      if (media.type === 'video' || /official\s*(?:music\s*)?video/i.test(media.title)) source.durationMs = 0;
       return candidates.find((item) => item.type === 'song' && item.videoId && item.albumBrowseId &&
-        sameRecording(item, media)) ?? media;
+        sameRecording(item, source)) ?? media;
     })().catch(() => media);
     if (this.#officialSongCache.size >= 500) this.#officialSongCache.clear();
     this.#officialSongCache.set(key, { promise, expires: Date.now() + 10 * 60 * 1000 });
@@ -900,7 +903,7 @@ export const upgradeMusicAudio = async (info, fetchMusicInfo, { timeoutMs = 5000
   return info;
 };
 
-const primaryMusicArtist = (value) => String(value ?? '').replace(/\s*[-–—]\s*Topic(?=,|$)/gi, '').split(/,|;| feat\.? | featuring | ft\.? /i)[0].trim();
+const primaryMusicArtist = (value) => String(value ?? '').replace(/\s*[-–—]\s*Topic(?=,|$)/gi, '').replace(/VEVO$/i, '').split(/,|;| feat\.? | featuring | ft\.? /i)[0].trim();
 const musicTitle = (value, artist) => {
   const title = String(value ?? '').replace(/\s*[([][^)\]]*(?:official|video|audio|lyrics?|visualizer|4k|hd)[^)\]]*[)\]]/gi, '').trim();
   const parts = title.split(/\s+[-–—]\s+/);

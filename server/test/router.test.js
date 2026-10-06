@@ -553,3 +553,22 @@ test('song mix route returns playable recommendations and rejects mutations', as
   const rejected = createResponse(); await router(createRequest('POST', '/api/media/aaaaaaaaaaa/mix'), rejected);
   assert.equal(rejected.status, 405);
 });
+
+test('song resolution proxies the matched recording and forces highest audio only', async () => {
+  const original = { videoId: 'aaaaaaaaaaa', title: 'Song', artist: 'Artist' };
+  const official = { videoId: 'bbbbbbbbbbb', title: 'Song', artist: 'Artist', album: 'Album', artworkUrl: 'https://img.example/album.jpg' };
+  const router = makeRouter({
+    officialSong: async (media) => { assert.deepEqual(media, original); return official; },
+    resolveStream: async (media, options) => {
+      assert.equal(media.videoId, official.videoId); assert.deepEqual(options, { preferVideo: false, quality: 'best' });
+      return { videoId: official.videoId, directUrl: 'https://audio.example/official.m4a', audioBitrate: 258000, hasVideo: false, media: { title: 'Song' } };
+    },
+  });
+  const response = createResponse();
+  await router(createRequest('POST', '/api/resolve-song', { media: original }), response);
+  assert.equal(response.status, 200);
+  const body = JSON.parse(response.body);
+  assert.equal(body.media.videoId, official.videoId); assert.equal(body.audioBitrate, 258000);
+  assert.match(body.proxyUrl, /bbbbbbbbbbb/); assert.match(body.proxyUrl, /preferVideo=false/);
+  assert.equal(body.media.artworkUrl, official.artworkUrl);
+});
