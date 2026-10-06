@@ -22,9 +22,10 @@ final class MusicPresentationAssets: ObservableObject {
     private var lyricsCache: [String: MusicLyrics] = [:]
     private var artworkCache: [String: MusicArtworkResult] = [:]
     private var generation = UUID()
+    private var staticCatalogAttempted = false
 
     func load(_ media: MediaItem?, animated: Bool) async {
-        let token = UUID(); generation = token
+        let token = UUID(); generation = token; staticCatalogAttempted = false
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         // Keep the previous backdrop until a new cover arrives; clearing it
         // would expose a colored fallback during every song transition.
@@ -78,7 +79,7 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
-        guard animated else { await loadStillArtwork(media, token: token); return }
+        guard animated else { await loadStillArtwork(media, token: token); await upgradeStillArtwork(media, token: token, forceCatalog: true); return }
         // Fetch the still cover and animation independently; a slow thumbnail
         // must not postpone finding or starting the motion artwork.
         async let stillCover: Void = loadStillArtwork(media, token: token)
@@ -95,13 +96,20 @@ final class MusicPresentationAssets: ObservableObject {
         _ = await stillCover
         guard !Task.isCancelled, generation == token else { return }
         if result.still != media.artworkUrl { await loadImage(result.still, token: token) }
+        if result.motion == nil { await upgradeStillArtwork(media, token: token, forceCatalog: true) }
     }
 
     private func loadStillArtwork(_ media: MediaItem, token: UUID) async {
         await loadImage(media.artworkUrl, token: token)
         guard generation == token, !Task.isCancelled else { return }
-        if min(artworkImage?.cgImage?.width ?? 0, artworkImage?.cgImage?.height ?? 0) < 600,
-           let catalog = await MusicLookup.catalogStill(for: media) {
+        await upgradeStillArtwork(media, token: token, forceCatalog: true)
+    }
+
+    private func upgradeStillArtwork(_ media: MediaItem, token: UUID, forceCatalog: Bool) async {
+        guard generation == token, !Task.isCancelled, !staticCatalogAttempted else { return }
+        guard forceCatalog || min(artworkImage?.cgImage?.width ?? 0, artworkImage?.cgImage?.height ?? 0) < 1000 else { return }
+        staticCatalogAttempted = true
+        if let catalog = await MusicLookup.catalogStill(for: media) {
             await loadImage(catalog, token: token)
         }
     }

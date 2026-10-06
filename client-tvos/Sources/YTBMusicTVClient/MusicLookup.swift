@@ -488,9 +488,10 @@ enum MusicLookup {
     static func highResolutionStillURL(_ url: URL) -> URL {
         let host = url.host?.lowercased() ?? ""
         var value = url.absoluteString
-        if host == "lh3.googleusercontent.com" || host == "lh3.ggpht.com" || host == "yt3.ggpht.com" {
+        if host.range(of: #"^(?:lh\d+\.(?:googleusercontent|ggpht)\.com|yt3\.ggpht\.com)$"#, options: .regularExpression) != nil {
             value = value.replacingOccurrences(of: #"=w\d+-h\d+[^?]*"#, with: "=w1200-h1200-l90-rj", options: .regularExpression)
             value = value.replacingOccurrences(of: #"=s\d+[^?]*"#, with: "=s1200", options: .regularExpression)
+            value = value.replacingOccurrences(of: #"=w\d+(?![-\d])[^?]*"#, with: "=w1200-h1200-l90-rj", options: .regularExpression)
         } else if host.hasSuffix(".mzstatic.com") {
             value = value.replacingOccurrences(of: #"/\d+x\d+([^/]*)$"#, with: "/1200x1200$1", options: .regularExpression)
             value = value.replacingOccurrences(of: "{w}x{h}", with: "1200x1200")
@@ -498,19 +499,43 @@ enum MusicLookup {
         return URL(string: value) ?? url
     }
 
+    static func catalogStillURL(_ data: Data, title: String, artist: String, album: String?, durationMs: Int, albumSearch: Bool) -> URL? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let records = json["results"] as? [[String: Any]] else { return nil }
+        if albumSearch {
+            guard let album, !album.isEmpty else { return nil }
+            return records.first(where: {
+                normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(primaryArtist(artist))
+                    && albumKey($0["collectionName"] as? String ?? "") == albumKey(album)
+            }).flatMap { validURL($0["artworkUrl100"] ?? $0["artworkUrl60"]) }.map(highResolutionStillURL)
+        }
+        guard let match = catalogAlbum(data, title: title, artist: artist, album: album, durationMs: durationMs) else { return nil }
+        return records.first(where: {
+            normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(primaryArtist(artist))
+                && normalized(artworkTitle($0["trackName"] as? String ?? "")) == normalized(artworkTitle(title))
+                && albumKey($0["collectionName"] as? String ?? "") == albumKey(match.name)
+        }).flatMap { validURL($0["artworkUrl100"] ?? $0["artworkUrl60"]) }.map(highResolutionStillURL)
+    }
+
     static func catalogStill(for media: MediaItem) async -> URL? {
         let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
-        guard !title.isEmpty, !artist.isEmpty,
-              let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "limit": "12"]),
-              let data = try? await fetch(url, timeout: 4),
-              let match = catalogAlbum(data, title: title, artist: artist, album: media.album, durationMs: media.durationMs),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let records = json["results"] as? [[String: Any]],
-              let record = records.first(where: { normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(artist)
-                  && normalized(artworkTitle($0["trackName"] as? String ?? "")) == normalized(title)
-                  && albumKey($0["collectionName"] as? String ?? "") == albumKey(match.name) }),
-              let cover = validURL(record["artworkUrl100"] ?? record["artworkUrl60"]) else { return nil }
-        return highResolutionStillURL(cover)
+        guard !title.isEmpty, !artist.isEmpty else { return nil }
+        return await withTaskGroup(of: URL?.self) { group in
+            for (index, country) in ["us", "gb", "ca"].enumerated() {
+                for albumSearch in [false, true] {
+                    if albumSearch && (media.album?.isEmpty ?? true) { continue }
+                    group.addTask {
+                        if index > 0 { try? await Task.sleep(nanoseconds: UInt64(index) * 500_000_000) }
+                        guard !Task.isCancelled,
+                              let url = query("https://itunes.apple.com/search", ["term": artist + " " + (albumSearch ? media.album ?? title : title), "entity": albumSearch ? "album" : "song", "country": country, "limit": "20"]),
+                              let data = try? await fetch(url, timeout: 4), !Task.isCancelled else { return nil }
+                        return catalogStillURL(data, title: title, artist: artist, album: media.album, durationMs: media.durationMs, albumSearch: albumSearch)
+                    }
+                }
+            }
+            for await cover in group { if let cover { group.cancelAll(); return cover } }
+            return nil
+        }
     }
 
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
