@@ -228,7 +228,7 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 // The trailing Crossfade menu anchors this row. Compact the
                 // preceding buttons toward it without changing that anchor.
-                HStack(spacing: -14) {
+                HStack(spacing: -24) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -254,6 +254,20 @@ struct MusicPlayerScreen: View {
                 .offset(y: 31)
             }
             .focusSection()
+            .onMoveCommand { direction in
+                noteControlActivity()
+                guard !scrubbing, !showingQueue, let current = focusedControl else { return }
+                // The progress strip spans the gap between the two button groups.
+                // Route horizontal navigation explicitly so tvOS cannot choose it
+                // instead of the button on the other side of that gap.
+                let order = ["Shuffle", "Previous", "PlayPause", "Next", "Repeat song", "Lyrics", "Queue", "Crossfade"]
+                guard let index = order.firstIndex(of: current) else { return }
+                switch direction {
+                case .left where index > 0: focusedControl = order[index - 1]
+                case .right where index + 1 < order.count: focusedControl = order[index + 1]
+                default: break
+                }
+            }
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
                                 onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false, visualsVisible: controlsVisible)
                 .padding(.horizontal, -60)
