@@ -225,6 +225,7 @@ struct MusicPlayerScreen: View {
                 }
                 .padding(.leading, -43)
                 .offset(y: 11)
+                .focusSection()
                 Spacer()
                 // The trailing Crossfade menu anchors this row. Compact the
                 // preceding buttons toward it without changing that anchor.
@@ -252,6 +253,7 @@ struct MusicPlayerScreen: View {
                 }
                 .padding(.trailing, -37)
                 .offset(y: 31)
+                .focusSection()
             }
             .focusSection()
             .onMoveCommand { direction in
