@@ -78,10 +78,10 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
-        guard animated else { await loadImage(media.artworkUrl, token: token); return }
+        guard animated else { await loadStillArtwork(media, token: token); return }
         // Fetch the still cover and animation independently; a slow thumbnail
         // must not postpone finding or starting the motion artwork.
-        async let stillCover: Void = loadImage(media.artworkUrl, token: token)
+        async let stillCover: Void = loadStillArtwork(media, token: token)
         guard !Task.isCancelled, generation == token else { return }
         let result: MusicArtworkResult
         let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? media.title)
@@ -97,13 +97,33 @@ final class MusicPresentationAssets: ObservableObject {
         if result.still != media.artworkUrl { await loadImage(result.still, token: token) }
     }
 
+    private func loadStillArtwork(_ media: MediaItem, token: UUID) async {
+        await loadImage(media.artworkUrl, token: token)
+        guard generation == token, !Task.isCancelled else { return }
+        if min(artworkImage?.cgImage?.width ?? 0, artworkImage?.cgImage?.height ?? 0) < 600,
+           let catalog = await MusicLookup.catalogStill(for: media) {
+            await loadImage(catalog, token: token)
+        }
+    }
+
     private func loadImage(_ url: URL?, token: UUID) async {
-        guard let url, let data = try? await MusicLookup.fetch(url), let image = UIImage(data: data),
-              generation == token, !Task.isCancelled else { return }
-        artworkImage = image
-        backgroundImage = image
-        colors = Self.palette(image)
-        backgroundVeil = Self.balancedVeil(image)
+        guard let url else { return }
+        let large = MusicLookup.highResolutionStillURL(url)
+        let candidates = large == url ? [url] : [large, url]
+        for candidate in candidates {
+            guard generation == token, !Task.isCancelled else { return }
+            guard let data = try? await MusicLookup.fetch(candidate, timeout: 5), let image = UIImage(data: data),
+                  generation == token, !Task.isCancelled else { continue }
+            // A small provider preview must never replace a sharper still cover.
+            let pixels = (image.cgImage?.width ?? 0) * (image.cgImage?.height ?? 0)
+            let existing = (artworkImage?.cgImage?.width ?? 0) * (artworkImage?.cgImage?.height ?? 0)
+            guard pixels >= existing else { return }
+            artworkImage = image
+            backgroundImage = image
+            colors = Self.palette(image)
+            backgroundVeil = Self.balancedVeil(image)
+            return
+        }
     }
 
     static func balancedVeil(_ image: UIImage) -> Double {

@@ -485,6 +485,34 @@ enum MusicLookup {
         return requests
     }
 
+    static func highResolutionStillURL(_ url: URL) -> URL {
+        let host = url.host?.lowercased() ?? ""
+        var value = url.absoluteString
+        if host == "lh3.googleusercontent.com" || host == "lh3.ggpht.com" || host == "yt3.ggpht.com" {
+            value = value.replacingOccurrences(of: #"=w\d+-h\d+[^?]*"#, with: "=w1200-h1200-l90-rj", options: .regularExpression)
+            value = value.replacingOccurrences(of: #"=s\d+[^?]*"#, with: "=s1200", options: .regularExpression)
+        } else if host.hasSuffix(".mzstatic.com") {
+            value = value.replacingOccurrences(of: #"/\d+x\d+([^/]*)$"#, with: "/1200x1200$1", options: .regularExpression)
+            value = value.replacingOccurrences(of: "{w}x{h}", with: "1200x1200")
+        }
+        return URL(string: value) ?? url
+    }
+
+    static func catalogStill(for media: MediaItem) async -> URL? {
+        let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
+        guard !title.isEmpty, !artist.isEmpty,
+              let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "limit": "12"]),
+              let data = try? await fetch(url, timeout: 4),
+              let match = catalogAlbum(data, title: title, artist: artist, album: media.album, durationMs: media.durationMs),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let records = json["results"] as? [[String: Any]],
+              let record = records.first(where: { normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(artist)
+                  && normalized(artworkTitle($0["trackName"] as? String ?? "")) == normalized(title)
+                  && albumKey($0["collectionName"] as? String ?? "") == albumKey(match.name) }),
+              let cover = validURL(record["artworkUrl100"] ?? record["artworkUrl60"]) else { return nil }
+        return highResolutionStillURL(cover)
+    }
+
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
         let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }

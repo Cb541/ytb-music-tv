@@ -58,6 +58,12 @@ enum PlaybackAndLyricsTests {
         precondition(MusicLookup.validURL("https://example.com/art.m3u8") != nil)
         precondition(MusicLookup.validURL(["unexpected": "object"]) == nil)
         precondition(MusicLookup.validURL("file:///etc/passwd") == nil)
+        let tinyCover = URL(string: "https://lh3.googleusercontent.com/cover=w60-h60-l90-rj")!
+        precondition(MusicLookup.highResolutionStillURL(tinyCover).absoluteString.hasSuffix("=w1200-h1200-l90-rj"))
+        let appleCover = URL(string: "https://is1-ssl.mzstatic.com/image/thumb/Music/cover/100x100bb.jpg")!
+        precondition(MusicLookup.highResolutionStillURL(appleCover).path.hasSuffix("1200x1200bb.jpg"))
+        let otherCover = URL(string: "https://example.com/100x100.jpg")!
+        precondition(MusicLookup.highResolutionStillURL(otherCover) == otherCover)
         let candidates = try JSONDecoder().decode([LRCLIBRecord].self, from: Data(#"[{"trackName":"Song","artistName":"Artist","duration":180,"plainLyrics":"Plain"},{"trackName":"Song","artistName":"Artist","duration":188,"syncedLyrics":"[00:01.00]Timed"},{"trackName":"Song (Live)","artistName":"Artist","duration":180,"syncedLyrics":"[00:00.00]Wrong version"}]"#.utf8))
         let best = MusicLookup.bestLyrics(candidates, title: "Song", artist: "Artist", duration: 180)
         precondition(best.synchronized && best.lines.first?.text == "Timed")

@@ -21,7 +21,7 @@ struct MusicPlayerScreen: View {
     @State private var scrubbing = false
     @FocusState private var focusedControl: String?
     @State private var controlHighlightVisible = true
-    @State private var controlsVisible = true
+    @AppStorage("YTBMusicTV.playerControlsVisible") private var controlsVisible = true
     @State private var controlActivityRevision = 0
 
     private var displayedMedia: MediaItem? { viewModel.pendingMedia ?? viewModel.state?.currentMedia }
@@ -41,6 +41,12 @@ struct MusicPlayerScreen: View {
                     Menu {
                         Button("View artist") { openRelated("artist") }
                         Button("View album") { openRelated("album") }
+                        Button {
+                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { controlsVisible.toggle() }
+                            focusedControl = "Artist"
+                        } label: {
+                            Label(controlsVisible ? "Hide player controls" : "Show player controls", systemImage: controlsVisible ? "eye.slash" : "eye")
+                        }
                         Button {} label: {
                             Label(viewModel.currentAudioBitrate.map { "Audio: \(($0 + 500) / 1000) kbps" } ?? "Audio bitrate unavailable", systemImage: "waveform")
                         }.disabled(true)
@@ -100,6 +106,9 @@ struct MusicPlayerScreen: View {
                         .frame(width: stage.size.width, height: stage.size.height)
                     }
                     playbackControls
+                        .opacity(controlsVisible ? 1 : 0)
+                        .disabled(!controlsVisible)
+                        .accessibilityHidden(!controlsVisible)
                 }
                 .padding(.horizontal, 90)
                 .padding(.top, 45)
@@ -124,7 +133,7 @@ struct MusicPlayerScreen: View {
         .task(id: lookupID) {
             await assets.load(viewModel.state?.currentMedia, animated: motionArtwork && !reduceMotion)
         }
-        .onAppear { focusedControl = "PlayPause"; noteControlActivity() }
+        .onAppear { focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
         .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }
         .onChange(of: scrubbing) { noteControlActivity() }
         .onChange(of: showingQueue) { noteControlActivity() }
@@ -140,11 +149,7 @@ struct MusicPlayerScreen: View {
             catch { return }
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { controlHighlightVisible = false }
-            do { try await Task.sleep(for: .seconds(6)) }
-            catch { return }
-            guard !Task.isCancelled, !scrubbing, !showingQueue, !viewModel.isPreparingPlayback,
-                  displayedMedia != nil, scenePhase == .active, !voiceOverEnabled else { return }
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) { controlsVisible = false }
+
         }
         .onPlayPauseCommand { noteControlActivity(); Task { await viewModel.togglePlayPause() } }
         .onExitCommand {
@@ -314,7 +319,6 @@ struct MusicPlayerScreen: View {
 
     private func noteControlActivity() {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
-            controlsVisible = true
             controlHighlightVisible = true
         }
         controlActivityRevision &+= 1
