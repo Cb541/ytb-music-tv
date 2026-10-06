@@ -152,3 +152,23 @@ test('song mix uses YouTube automix and retains different artists in recommendat
   assert.equal(result.sections[0].items[0].artworkUrl, 'https://img.example/cover.jpg');
   await assert.rejects(recommendedMix({ getUpNext: async () => { throw Error('unavailable'); } }, 'aaaaaaaaaaa'), /unavailable/);
 });
+
+test('official song redirects only matching catalog recordings and shares lookups', async () => {
+  const api = service(); let calls = 0;
+  const original = { id: 'aaaaaaaaaaa', videoId: 'aaaaaaaaaaa', type: 'video', title: 'Artist - Song (Official Video)', artist: 'Artist', durationMs: 180000 };
+  const official = { id: 'bbbbbbbbbbb', videoId: 'bbbbbbbbbbb', type: 'song', title: 'Song', artist: 'Artist', durationMs: 181000, albumBrowseId: 'MPRalbum' };
+  api.search = async () => { calls++; return { sections: [{ items: [{ ...official, title: 'Song (Live)' }, { ...official, artist: 'Cover Band' }, official] }] }; };
+  const [a, b] = await Promise.all([api.officialSong(original), api.officialSong(original)]);
+  assert.equal(a, official); assert.equal(b, official); assert.equal(calls, 1);
+  assert.equal(await api.officialSong(official), official); assert.equal(calls, 1);
+});
+
+test('official song keeps originals when unavailable, mismatched, or search fails', async () => {
+  const api = service();
+  const original = { videoId: 'aaaaaaaaaaa', type: 'video', title: 'Song (Live)', artist: 'Artist' };
+  api.search = async () => ({ sections: [{ items: [{ videoId: 'bbbbbbbbbbb', type: 'song', title: 'Song', artist: 'Artist', albumBrowseId: 'MPRalbum' }] }] });
+  assert.equal(await api.officialSong(original), original);
+  api.search = async () => { throw Error('offline'); };
+  const next = { ...original, videoId: 'ccccccccccc' };
+  assert.equal(await api.officialSong(next), next);
+});

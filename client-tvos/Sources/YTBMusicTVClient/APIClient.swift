@@ -50,6 +50,10 @@ struct APIClient {
         try await post("/api/browse/related", body: RelatedBrowseRequest(media: media, kind: kind))
     }
 
+    func officialSong(media: MediaItem) async throws -> MediaItem {
+        try await post("/api/media/official-song", body: BrowseRequest(media: media, paged: true, continuation: nil), timeout: 4)
+    }
+
     func mix(mediaId: String) async throws -> MediaSectionResponse {
         try await get("/api/media/\(mediaId)/mix")
     }

@@ -95,6 +95,10 @@ enum PlaybackAndLyricsTests {
         }
         precondition(MusicLookup.artworkResult(rockstarMotion, title: "Rockstar", artist: "Other Artist", album: nil, fallback: nil) == nil)
         let multipleReleases = Data(#"{"results":[{"trackName":"rockstar (feat. 21 Savage)","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"The Diamond Collection","collectionId":2,"trackTimeMillis":218146},{"trackName":"rockstar (Live)","artistName":"Post Malone","collectionName":"Live","collectionId":3,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Other Artist","collectionName":"Other","collectionId":4,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"Wrong recording length","collectionId":5,"trackTimeMillis":418146}]}"#.utf8)
+        precondition(MusicLookup.artworkTitle("Last Thing You Need (from GTAVI: The Album)") == "Last Thing You Need")
+        precondition(MusicLookup.artworkTitle("Song (Live)") == "Song (Live)")
+        let soundtrack = Data(#"{"results":[{"trackName":"Last Thing You Need","artistName":"Morgan Wallen","collectionName":"Grand Theft Auto VI: The Album","collectionId":6812476961,"trackTimeMillis":196000}]}"#.utf8)
+        precondition(MusicLookup.catalogAlbums(soundtrack, title: "Last Thing You Need (from GTAVI: The Album)", artist: "Morgan Wallen, Grand Theft Auto VI", album: "Last Thing You Need (from GTAVI: The Album) - Single", durationMs: 196000).count == 1)
         let releases = MusicLookup.catalogAlbums(multipleReleases, title: "Rockstar ft. 21 Savage", artist: "Post Malone", album: nil, durationMs: 218000)
         precondition(releases.map(\.id) == ["1", "2"])
         precondition(MusicLookup.catalogAlbums(multipleReleases, title: "Rockstar", artist: "Post Malone", album: "beerbongs & bentleys", durationMs: 218000).map(\.id) == ["1"])

@@ -51,7 +51,7 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                ArtworkBackdrop(media: viewModel.state?.currentMedia)
+                Color.black
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
 

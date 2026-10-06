@@ -875,11 +875,18 @@ final class PlayerViewModel: ObservableObject {
         _ media: MediaItem,
         client: APIClient
     ) async throws -> ResolvedPlaybackMedia {
-        if let videoID = media.videoId {
-            let resolved = try await client.resolve(mediaId: videoID, preferVideo: config?.playback.preferVideo)
-            var merged = merge(media, with: resolved.media)
+        if media.videoId != nil {
+            let needsSongLookup = media.type != "song" || media.albumBrowseId == nil
+            let canonical = needsSongLookup ? ((try? await client.officialSong(media: media)) ?? media) : media
+            let redirected = canonical.videoId != media.videoId
+            let preferVideo = redirected || media.type == "video" ? false : config?.playback.preferVideo
+            let resolved = try await client.resolve(mediaId: canonical.videoId ?? media.videoId!, preferVideo: preferVideo)
+            var merged = merge(canonical, with: resolved.media)
+            // Keep the playlist slot stable while using the official recording for playback and ratings.
+            merged.id = media.id
+            if redirected { merged.artworkUrl = canonical.artworkUrl ?? merged.artworkUrl }
             let playbackURLs = playbackURLs(for: resolved, streamMode: config?.playback.streamMode)
-            let adaptiveURLs = config?.playback.preferVideo == true
+            let adaptiveURLs = preferVideo == true
                 ? adaptivePlaybackURLs(for: resolved, streamMode: config?.playback.streamMode) : nil
             let playbackURL = playbackURLs.primary
             merged.playbackUrl = playbackURL
@@ -889,7 +896,7 @@ final class PlayerViewModel: ObservableObject {
                 playbackURLs.fallback,
                 adaptiveURLs?.video,
                 adaptiveURLs?.audio,
-                config?.playback.preferVideo == true && resolved.hasVideo == true,
+                preferVideo == true && resolved.hasVideo == true,
                 resolved.mimeType,
                 resolved.audioBitrate
             )

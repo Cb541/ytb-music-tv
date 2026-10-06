@@ -228,7 +228,7 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 // The trailing Crossfade menu anchors this row. Compact the
                 // preceding buttons toward it without changing that anchor.
-                HStack(spacing: 2) {
+                HStack(spacing: -14) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -251,7 +251,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
                 .padding(.trailing, -37)
-                .offset(y: 23)
+                .offset(y: 31)
             }
             .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
@@ -275,7 +275,7 @@ struct MusicPlayerScreen: View {
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label, isVisible: controlsVisible,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 2 : 4))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 8 : 4))
         .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
         .foregroundStyle(assets.accentColor)

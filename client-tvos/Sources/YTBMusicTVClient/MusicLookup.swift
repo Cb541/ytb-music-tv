@@ -80,6 +80,7 @@ enum MusicLookup {
     // those credits for cover matching; live/remix/version labels still matter.
     static func artworkTitle(_ value: String) -> String {
         cleaned(value)
+            .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*from\s+[^\)\]]+(?:album|soundtrack)[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]+[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s+(?:feat\.?|ft\.?|featuring)\s+[^\(\[]+$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -324,7 +325,8 @@ enum MusicLookup {
                   normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)),
                   durationMs <= 0 || record["trackTimeMillis"] == nil ||
                     abs((record["trackTimeMillis"] as? Int ?? durationMs) - durationMs) <= 12000,
-                  album == nil || albumKey(record["collectionName"] as? String ?? "") == albumKey(album ?? ""),
+                  album == nil || albumKey(record["collectionName"] as? String ?? "") == albumKey(album ?? "") ||
+                    normalized(artworkTitle(album ?? "").replacingOccurrences(of: #"(?i)\s*[-–—]\s*Single$"#, with: "", options: .regularExpression)) == normalized(artworkTitle(title)),
                   let name = record["collectionName"] as? String, !name.isEmpty else { return nil }
             let id = (record["collectionId"] as? NSNumber)?.stringValue
             let page = validURL(record["collectionViewUrl"]).flatMap { $0.host == "music.apple.com" ? $0 : nil }

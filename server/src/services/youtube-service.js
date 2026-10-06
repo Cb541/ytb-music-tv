@@ -37,6 +37,7 @@ export class YouTubeMusicService {
   #streamCache = new Map();
   #streamInflight = new Map();
   #playlistSearchCache = new Map();
+  #officialSongCache = new Map();
 
   constructor({ configStore, sessionStore, oauthLibraryService = null, fetchFunction = globalThis.fetch,
     cookieFile = join(process.env.YTB_MUSIC_TV_DATA_DIR ?? new URL('../../data', import.meta.url).pathname, 'youtube-music.cookies.txt'),
@@ -76,6 +77,27 @@ export class YouTubeMusicService {
     const client = await this.#client();
     const result = await client.music.search(query, filters);
     return normalizeSearch(result);
+  }
+
+  // Only redirect video/unknown entries without an album. Catalog songs need no extra request.
+  async officialSong(media) {
+    if (!media?.videoId || !media.title || !media.artist ||
+        (media.type === 'song' && media.albumBrowseId)) return media;
+    const key = media.videoId;
+    const cached = this.#officialSongCache.get(key);
+    if (cached && cached.expires > Date.now()) return await cached.promise;
+    const promise = (async () => {
+      const result = await boundedMusicInfo(() => this.search(
+        [musicTitle(media.title, primaryMusicArtist(media.artist)), primaryMusicArtist(media.artist)].join(' '),
+        { type: 'song' }), { timeoutMs: 2500 });
+      const candidates = result?.sections?.flatMap((section) => section.items) ?? [];
+      // Require song catalog metadata and exact recording identity. Never choose a fuzzy first result.
+      return candidates.find((item) => item.type === 'song' && item.videoId && item.albumBrowseId &&
+        sameRecording(item, media)) ?? media;
+    })().catch(() => media);
+    if (this.#officialSongCache.size >= 500) this.#officialSongCache.clear();
+    this.#officialSongCache.set(key, { promise, expires: Date.now() + 10 * 60 * 1000 });
+    return await promise;
   }
 
   async playlistSearch(media, query) {

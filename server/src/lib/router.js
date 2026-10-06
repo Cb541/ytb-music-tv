@@ -119,6 +119,13 @@ export const createApiRouter = ({
       return json(res, 200, withSectionPlaybackUrls(result, baseUrl), corsHeaders());
     }
 
+    if (pathname === '/api/media/official-song') {
+      if (req.method !== 'POST') return methodNotAllowed(res);
+      const body = await readJson(req);
+      const media = await youtubeService.officialSong(body.media);
+      return json(res, 200, media, corsHeaders());
+    }
+
     if (pathname === '/api/playlist/search' || pathname === '/api/browse/related') {
       if (req.method !== 'POST') return methodNotAllowed(res);
       const body = await readJson(req);
