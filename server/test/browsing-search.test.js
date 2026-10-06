@@ -165,7 +165,7 @@ test('official song redirects only matching catalog recordings and shares lookup
 
 test('official song keeps originals when unavailable, mismatched, or search fails', async () => {
   const api = service();
-  const original = { videoId: 'aaaaaaaaaaa', type: 'video', title: 'Song (Live)', artist: 'Artist' };
+  const original = { videoId: 'aaaaaaaaaaa', type: 'video', title: 'Different Song (Live)', artist: 'Artist' };
   api.search = async () => ({ sections: [{ items: [{ videoId: 'bbbbbbbbbbb', type: 'song', title: 'Song', artist: 'Artist', albumBrowseId: 'MPRalbum' }] }] });
   assert.equal(await api.officialSong(original), original);
   api.search = async () => { throw Error('offline'); };
@@ -173,12 +173,14 @@ test('official song keeps originals when unavailable, mismatched, or search fail
   assert.equal(await api.officialSong(next), next);
 });
 
-test('video matching tolerates intros and VEVO authors but preserves live versions', async () => {
+test('video matching tolerates intros and redirects performances to the studio recording', async () => {
   const api = service();
   const official = { videoId: 'bbbbbbbbbbb', type: 'song', title: 'Song', artist: 'Artist', durationMs: 180000, albumBrowseId: 'MPRalbum' };
   api.search = async () => ({ sections: [{ items: [official] }] });
   const video = { videoId: 'aaaaaaaaaaa', type: 'video', title: 'Artist - Song (Official Music Video)', artist: 'ArtistVEVO', durationMs: 225000 };
   assert.equal(await api.officialSong(video), official);
   const live = { ...video, videoId: 'ccccccccccc', title: 'Song (Live)' };
-  assert.equal(await api.officialSong(live), live);
+  assert.equal(await api.officialSong(live), official);
+  const upload = { ...video, videoId: "ddddddddddd", artist: "Concert channel", title: "Artist - Song (Live at Festival 2024)" };
+  assert.equal(await api.officialSong(upload), official);
 });

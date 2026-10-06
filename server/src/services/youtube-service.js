@@ -87,12 +87,19 @@ export class YouTubeMusicService {
     const cached = this.#officialSongCache.get(key);
     if (cached && cached.expires > Date.now()) return await cached.promise;
     const promise = (async () => {
+      const source = { ...media };
+      if (media.type !== 'song') {
+        // In music playback, replace performance videos with the official studio song.
+        source.title = studioVideoTitle(media.title);
+        source.durationMs = 0;
+        const parts = source.title.split(/\s+[-–—]\s+/);
+        if (parts.length > 1) source.artist = parts[0];
+      }
       const result = await boundedMusicInfo(() => this.search(
-        [musicTitle(media.title, primaryMusicArtist(media.artist)), primaryMusicArtist(media.artist)].join(' '),
+        [musicTitle(source.title, primaryMusicArtist(source.artist)), primaryMusicArtist(source.artist)].join(' '),
         { type: 'song' }), { timeoutMs: 5000 });
       const candidates = result?.sections?.flatMap((section) => section.items) ?? [];
       // Require song catalog metadata and exact recording identity. Never choose a fuzzy first result.
-      const source = { ...media };
       // Videos can have long intros/outros; duration is not recording identity here.
       if (media.type === 'video' || /official\s*(?:music\s*)?video/i.test(media.title)) source.durationMs = 0;
       return candidates.find((item) => item.type === 'song' && item.videoId && item.albumBrowseId &&
@@ -911,6 +918,10 @@ export const upgradeMusicAudio = async (info, fetchMusicInfo, { timeoutMs = 5000
   }
   return info;
 };
+
+const studioVideoTitle = (title) => String(title ?? '')
+  .replace(/\s*[([](?:live\b|performed\b|performance\b|concert\b)[^)\]]*[)\]]/gi, '')
+  .replace(/\s+[-–—]\s+(?:live\b|performed\b|performance\b|concert\b).*$/i, '').trim();
 
 const primaryMusicArtist = (value) => String(value ?? '').replace(/\s*[-–—]\s*Topic(?=,|$)/gi, '').replace(/VEVO$/i, '').split(/,|;| feat\.? | featuring | ft\.? /i)[0].trim();
 const musicTitle = (value, artist) => {

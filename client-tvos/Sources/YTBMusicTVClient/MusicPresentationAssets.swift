@@ -42,12 +42,19 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadLyrics(_ media: MediaItem, token: UUID) async {
-        if let cached = lyricsCache[media.id], cached.wordSynchronized {
+        // Generic studio lyric timings cannot synchronize an unmatched live video.
+        if media.type != "song", media.title.range(of: "\\blive\\b|\\bconcert\\b", options: [.regularExpression, .caseInsensitive]) != nil {
+            guard generation == token else { return }
+            lyrics = MusicLyrics(); lyricsLoading = false
+            return
+        }
+        let lyricsKey = media.videoId ?? media.id
+        if let cached = lyricsCache[lyricsKey], cached.wordSynchronized {
             guard generation == token else { return }
             lyrics = cached; lyricsLoading = false
             return
         }
-        let cached = lyricsCache[media.id]
+        let cached = lyricsCache[lyricsKey]
         if let cached { lyrics = cached; lyricsLoading = false }
         // Publish the first usable result; a slow base provider must not hold
         // back word timings already returned by a richer provider.
@@ -65,7 +72,7 @@ final class MusicPresentationAssets: ObservableObject {
             }
             guard !Task.isCancelled, generation == token else { return }
             if lyricsCache.count > 50 { lyricsCache.removeAll() }
-            if !best.lines.isEmpty || best.instrumental { lyricsCache[media.id] = best }
+            if !best.lines.isEmpty || best.instrumental { lyricsCache[lyricsKey] = best }
             lyrics = best; lyricsLoading = false
         }
     }

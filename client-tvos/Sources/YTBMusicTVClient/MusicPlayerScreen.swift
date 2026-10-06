@@ -26,7 +26,7 @@ struct MusicPlayerScreen: View {
 
     private var displayedMedia: MediaItem? { viewModel.pendingMedia ?? viewModel.state?.currentMedia }
     private var musicVideoActive: Bool { videoVisible && viewModel.currentStreamHasVideo }
-    private var lookupID: String { (viewModel.state?.currentMediaId ?? "") + (motionArtwork ? ":motion" : ":still") }
+    private var lookupID: String { (viewModel.state?.currentMedia?.videoId ?? viewModel.state?.currentMediaId ?? "") + (motionArtwork ? ":motion" : ":still") }
 
     var body: some View {
         GeometryReader { geometry in
@@ -216,6 +216,7 @@ struct MusicPlayerScreen: View {
                         highlighted: controlHighlightVisible && focusedControl == "PlayPause", isVisible: controlsVisible, showsBackground: false, horizontalPadding: 4))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
+                    .onMoveCommand { moveControl(from: "PlayPause", direction: $0) }
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                     .disabled(scrubbing)
                     control("forward.end.fill", label: "Next", boxless: true) { Task { await viewModel.next() } }
@@ -229,7 +230,7 @@ struct MusicPlayerScreen: View {
                 Spacer()
                 // The trailing Crossfade menu anchors this row. Compact the
                 // preceding buttons toward it without changing that anchor.
-                HStack(spacing: -24) {
+                HStack(spacing: 0) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -240,36 +241,23 @@ struct MusicPlayerScreen: View {
                     } label: {
                         Image(systemName: "waveform")
                             .font(.system(size: 25, weight: .semibold))
-                            .frame(width: 48, height: 44)
+                            .frame(width: 40, height: 44)
                     }
                     .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
-                        highlighted: controlHighlightVisible && focusedControl == "Crossfade", isVisible: controlsVisible, showsBackground: false))
+                        highlighted: controlHighlightVisible && focusedControl == "Crossfade", isVisible: controlsVisible, showsBackground: false, horizontalPadding: 0))
                     .tint(assets.accentColor).foregroundStyle(assets.accentColor)
                     .fixedSize(horizontal: true, vertical: false)
                     .scaleEffect(0.88)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
+                    .onMoveCommand { moveControl(from: "Crossfade", direction: $0) }
                     .accessibilityLabel("Crossfade duration")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
-                .padding(.trailing, -37)
+                .padding(.trailing, -25)
                 .offset(y: 31)
                 .focusSection()
             }
             .focusSection()
-            .onMoveCommand { direction in
-                noteControlActivity()
-                guard !scrubbing, !showingQueue, let current = focusedControl else { return }
-                // The progress strip spans the gap between the two button groups.
-                // Route horizontal navigation explicitly so tvOS cannot choose it
-                // instead of the button on the other side of that gap.
-                let order = ["Shuffle", "Previous", "PlayPause", "Next", "Repeat song", "Lyrics", "Queue", "Crossfade"]
-                guard let index = order.firstIndex(of: current) else { return }
-                switch direction {
-                case .left where index > 0: focusedControl = order[index - 1]
-                case .right where index + 1 < order.count: focusedControl = order[index + 1]
-                default: break
-                }
-            }
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
                                 onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false, visualsVisible: controlsVisible)
                 .padding(.horizontal, -60)
@@ -287,16 +275,30 @@ struct MusicPlayerScreen: View {
                     Image(systemName: icon).font(.system(size: 25, weight: .semibold))
                 }
             }
-            .frame(width: 48, height: 44)
+            .frame(width: compact ? 40 : 48, height: 44)
         }
         .buttonStyle(MusicControlButtonStyle(accent: assets.accentColor,
             highlighted: controlHighlightVisible && focusedControl == label, isVisible: controlsVisible,
-            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 8 : 4))
+            backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 0 : 4))
         .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
+        .onMoveCommand { moveControl(from: label, direction: $0) }
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
+    }
+
+    private func moveControl(from source: String, direction: MoveCommandDirection) {
+        noteControlActivity()
+        guard !scrubbing, !showingQueue else { return }
+        let order = ["Shuffle", "Previous", "PlayPause", "Next", "Repeat song", "Lyrics", "Queue", "Crossfade"]
+        guard let index = order.firstIndex(of: source) else { return }
+        // Use the originating button, never focus already changed by tvOS.
+        switch direction {
+        case .left where index > 0: focusedControl = order[index - 1]
+        case .right where index + 1 < order.count: focusedControl = order[index + 1]
+        default: break
+        }
     }
 
     private func openRelated(_ kind: String) {
