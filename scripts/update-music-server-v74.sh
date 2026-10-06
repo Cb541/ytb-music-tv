@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Prefer the high-quality Music session before TV playback. Keep local data/configuration.
-revision=4b0e03639aff91a89d81e4d0d899d024f52437e0
+revision=4d501055a6279b7fbae6be07d33d3e05d5d0dcd6
 container=$(docker ps -aq --filter label=com.docker.compose.service=ytb-music-tv-server | head -n 1)
 if [[ -z "$container" ]]; then
   echo 'Could not find the music server container. Start it first.' >&2
