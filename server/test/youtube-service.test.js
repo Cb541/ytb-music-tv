@@ -246,7 +246,7 @@ test('playable responses without compatible audio continue through fallback clie
   assert.deepEqual(calls, ['YTMUSIC', 'ANDROID', 'WEB']);
 });
 
-test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, and survives TV failure', async () => {
+test('cookie audio bypasses TV OAuth, reloads cookies, and retains fallback playback', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'ytb-cookies-test-'));
   const cookieFile = join(dir, 'cookies.txt');
   const low = format({ has_audio: true, mime_type: 'audio/mp4; codecs="mp4a.40.2"', bitrate: 130000,
@@ -255,7 +255,7 @@ test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, 
   const info = (audio) => ({ basic_info: { id: 'test-song', title: 'Test' },
     playability_status: { status: 'OK' }, streaming_data: { formats: [], adaptive_formats: [audio] } });
   const factoryOptions = [], oauthClients = [];
-  let tvFails = false;
+  let tvFails = false, cookieFails = false, cookieCalls = 0;
   const writeCookies = (value) => writeFile(cookieFile, `.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\t${value}\n`);
   const service = new YouTubeMusicService({
     configStore: { get: () => ({ youtube: {} }) }, sessionStore: sessionStore(), cookieFile,
@@ -263,7 +263,12 @@ test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, 
     clientFactory: async (options) => {
       factoryOptions.push(options);
       return { session: { player: { signature_timestamp: 123 } }, getBasicInfo: async (_, { client }) => {
-        if (options.cookie) { assert.equal(client, 'YTMUSIC'); return info(high); }
+        if (options.cookie) {
+          cookieCalls += 1;
+          assert.equal(client, 'YTMUSIC');
+          if (cookieFails) throw Error('Music unavailable');
+          return info(high);
+        }
         assert.equal(client, 'TV', 'a TV OAuth session must not request the Music client');
         if (tvFails) throw Error('TV unavailable');
         return info(low);
@@ -277,8 +282,7 @@ test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, 
     assert.equal(factoryOptions[0].client_type, 'TVHTML5');
     assert.equal(factoryOptions[1].client_type, 'WEB_REMIX');
     assert.equal(factoryOptions[1].retrieve_innertube_config, false);
-    assert.equal(oauthClients.length, 1);
-    assert.equal(oauthClients[0].session.player.signature_timestamp, 123);
+    assert.equal(oauthClients.length, 0, "cookie audio must bypass TV OAuth entirely");
     await writeCookies('test-two');
     tvFails = true;
     assert.equal((await service.resolveStream({ videoId: 'song-two' }, { preferVideo: false })).audioBitrate, 256000);
@@ -288,6 +292,13 @@ test('cookie Music upgrades AAC separately from OAuth, reloads changed cookies, 
     tvFails = false;
     assert.equal((await service.resolveStream({ videoId: 'song-three' }, { preferVideo: false })).audioBitrate, 130000);
     assert.equal(service.authStatus().hasCookie, false);
+    assert.equal(oauthClients.length, 1, 'missing cookies must retain TV OAuth fallback');
+    await writeCookies('test-three');
+    cookieFails = true;
+    const previousCookieCalls = cookieCalls;
+    assert.equal((await service.resolveStream({ videoId: 'song-four' }, { preferVideo: false })).audioBitrate, 130000);
+    assert.equal(cookieCalls - previousCookieCalls, 1, 'failed Music lookup must not be repeated before fallback');
+    assert.equal(oauthClients.length, 2);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

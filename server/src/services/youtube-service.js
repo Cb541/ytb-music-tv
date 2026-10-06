@@ -428,18 +428,27 @@ export class YouTubeMusicService {
     return await info.download(downloadOptions);
   }
 
-  async #playbackInfo(videoId, { skipOAuth = false } = {}) {
-    const info = await boundedMusicInfo(() => this.#resolvePlaybackInfo(videoId, { skipOAuth }), { timeoutMs: 20000 });
+  async #playbackInfo(videoId, { skipOAuth = false, preferVideo = true } = {}) {
+    const info = await boundedMusicInfo(() => this.#resolvePlaybackInfo(videoId, { skipOAuth, preferVideo }), { timeoutMs: 20000 });
     if (!info) throw new Error('Playback lookup failed or timed out. Please try again.');
     return info;
   }
 
-  async #resolvePlaybackInfo(videoId, { skipOAuth = false } = {}) {
+  async #resolvePlaybackInfo(videoId, { skipOAuth = false, preferVideo = true } = {}) {
     let fallbackInfo = null;
     let fallbackError = null;
     if (!skipOAuth) {
       const playbackClient = await this.#playbackClient();
       const cookieClient = await this.#cookieMusicClient(playbackClient);
+      // Audio-only Music playback should not wait for a TV OAuth request that
+      // often fails or returns lower-quality audio. Keep the full Music budget.
+      let cookieAttempted = false;
+      if (cookieClient && !preferVideo) {
+        cookieAttempted = true;
+        const info = await boundedMusicInfo(() => cookieClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
+        if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) return info;
+        console.warn('Cookie Music playback unavailable; trying TV playback fallback.');
+      }
       if (this.#oauthLibraryService?.authStatus().status === 'configured') {
         try {
           await this.#oauthLibraryService.authorizeSession(playbackClient);
@@ -447,7 +456,7 @@ export class YouTubeMusicService {
           if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) {
             // Music web playback can reject TV OAuth tokens. Use the optional
             // browser-cookie session for Premium audio, without changing Library auth.
-            return cookieClient ? await upgradeMusicAudio(info, () => cookieClient
+            return cookieClient && !cookieAttempted ? await upgradeMusicAudio(info, () => cookieClient
               .getBasicInfo(videoId, { client: 'YTMUSIC' })) : info;
           }
           console.warn(`OAuth TV player returned ${info?.playability_status?.status ?? 'unknown'} for ${videoId}`);
@@ -456,7 +465,7 @@ export class YouTubeMusicService {
         }
       }
 
-      if (cookieClient) {
+      if (cookieClient && !cookieAttempted) {
         const info = await boundedMusicInfo(() => cookieClient.getBasicInfo(videoId, { client: 'YTMUSIC' }));
         if (isPlayable(info) && selectTvOSFormats(info, { preferVideo: false }).playback) return info;
         console.warn('Cookie Music playback unavailable; retaining existing playback fallback.');
