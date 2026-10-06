@@ -31,9 +31,10 @@ enum MusicLookup {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func fetch(_ url: URL, timeout: TimeInterval = 9) async throws -> Data {
+    static func fetch(_ url: URL, timeout: TimeInterval = 9, headers: [String: String] = [:]) async throws -> Data {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.setValue("YTBMusicTV-Custom/1.0", forHTTPHeaderField: "User-Agent")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               data.count <= 16 * 1024 * 1024 else { throw URLError(.badServerResponse) }
@@ -377,6 +378,47 @@ enum MusicLookup {
         return MusicArtworkResult(still: fallback, motion: motion)
     }
 
+    static func appleCatalogArtwork(_ data: Data, albumID: String, fallback: URL?) -> MusicArtworkResult? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let records = root["data"] as? [[String: Any]],
+              let record = records.first(where: { ($0["id"] as? String) == albumID && ($0["type"] as? String) == "albums" }),
+              let attributes = record["attributes"] as? [String: Any],
+              let editorial = attributes["editorialVideo"] as? [String: Any] else { return nil }
+        for key in ["motionSquareVideo1x1", "motionDetailSquare"] {
+            if let variant = editorial[key] as? [String: Any], let motion = motionURL(variant["video"]) {
+                return MusicArtworkResult(still: fallback, motion: motion)
+            }
+        }
+        return nil
+    }
+
+    static func directAppleArtwork(albumID: String, country: String, fallback: URL?) async -> MusicArtworkResult? {
+        guard albumID.allSatisfy(\.isNumber), !albumID.isEmpty,
+              let token = await AppleArtworkCatalogSession.shared.token(), !Task.isCancelled,
+              let url = query("https://amp-api.music.apple.com/v1/catalog/" + country + "/albums/" + albumID,
+                              ["extend": "editorialVideo"]) else { return nil }
+        do {
+            let data = try await fetch(url, timeout: 5, headers: ["Authorization": "Bearer " + token,
+                "Origin": "https://music.apple.com", "Accept": "application/json"])
+            return appleCatalogArtwork(data, albumID: albumID, fallback: fallback)
+        } catch {
+            // Refresh on the next lookup if the anonymous web token has changed.
+            if (error as? URLError)?.code == .badServerResponse {
+                await AppleArtworkCatalogSession.shared.invalidate(token)
+            }
+            return nil
+        }
+    }
+
+    static func artworkProviderRank(_ url: URL) -> Int {
+        switch url.host {
+        case "artwork.boidu.dev": return 0
+        case "apple-music-artwork.nopxx.site": return 1
+        case "artwork.m8tec.top": return 2
+        default: return 3
+        }
+    }
+
     static func catalogArtwork(_ catalog: MusicCatalogAlbum, country: String, title: String, artist: String, durationMs: Int, fallback: URL?) async -> MusicArtworkResult? {
         let page = catalog.page ?? catalog.id.flatMap { URL(string: "https://music.apple.com/" + country + "/album/" + $0) }
         var requests = artworkRequests(title: title, artist: artist, album: catalog.name, durationMs: durationMs, includeCatalog: false)
@@ -389,7 +431,14 @@ enum MusicLookup {
         }
         let resolvedRequests = requests
         return await withTaskGroup(of: MusicArtworkResult?.self) { group in
-            group.addTask { await firstArtwork(from: resolvedRequests, title: title, artist: artist, album: catalog.name, fallback: fallback) }
+            if let id = catalog.id {
+                group.addTask { await directAppleArtwork(albumID: id, country: country, fallback: fallback) }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled else { return nil }
+                return await firstArtwork(from: resolvedRequests, title: title, artist: artist, album: catalog.name, fallback: fallback)
+            }
             if let page, let id = catalog.id {
                 group.addTask {
                     guard !Task.isCancelled, let data = try? await fetch(page), !Task.isCancelled else { return nil }
@@ -406,8 +455,10 @@ enum MusicLookup {
         load: @escaping @Sendable (URL) async throws -> Data = { try await fetch($0) }
     ) async -> MusicArtworkResult? {
         await withTaskGroup(of: MusicArtworkResult?.self) { group in
-            for url in requests {
+            for url in requests.sorted(by: { artworkProviderRank($0) < artworkProviderRank($1) }) {
                 group.addTask {
+                    let rank = artworkProviderRank(url)
+                    if rank > 0 { try? await Task.sleep(nanoseconds: UInt64(rank) * 350_000_000) }
                     guard !Task.isCancelled, let data = try? await load(url), !Task.isCancelled else { return nil }
                     return artworkResult(data, title: title, artist: artist, album: album, fallback: fallback)
                 }
@@ -444,9 +495,9 @@ enum MusicLookup {
             group.addTask {
                 await firstArtwork(from: direct, title: title, artist: artist, album: album, fallback: fallback)
             }
-            for (index, country) in ["us", "gb"].enumerated() {
+            for (index, country) in ["us", "gb", "ca", "au"].enumerated() {
                 group.addTask {
-                    if index > 0 { try? await Task.sleep(nanoseconds: 1_500_000_000) }
+                    if index > 0 { try? await Task.sleep(nanoseconds: UInt64(index) * 1_500_000_000) }
                     guard !Task.isCancelled,
                           let url = query("https://itunes.apple.com/search", ["term": artist + " " + title, "entity": "song", "country": country, "limit": "12"]),
                           let data = try? await fetch(url), !Task.isCancelled else { return nil }
@@ -471,5 +522,39 @@ enum MusicLookup {
             return nil
         }
         return result ?? MusicArtworkResult(still: media.artworkUrl)
+    }
+}
+
+// Shared anonymous web-catalog token; no user credentials or Music subscription required.
+private actor AppleArtworkCatalogSession {
+    static let shared = AppleArtworkCatalogSession()
+    private var cached: (token: String, expires: Date)?
+    private var pending: Task<String?, Never>?
+
+    func token() async -> String? {
+        if let cached, cached.expires > Date() { return cached.token }
+        if let pending {
+            return await withTaskCancellationHandler(operation: { await pending.value }, onCancel: { pending.cancel() })
+        }
+        let task = Task<String?, Never> {
+            guard let page = URL(string: "https://music.apple.com/us/browse"),
+                  let data = try? await MusicLookup.fetch(page, timeout: 5),
+                  let html = String(data: data, encoding: .utf8),
+                  let bundleRange = html.range(of: #"/assets/index[^"']*\.js"#, options: .regularExpression),
+                  let bundle = URL(string: "https://music.apple.com" + String(html[bundleRange])),
+                  let scriptData = try? await MusicLookup.fetch(bundle, timeout: 5),
+                  let script = String(data: scriptData, encoding: .utf8),
+                  let tokenRange = script.range(of: #"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#, options: .regularExpression) else { return nil }
+            return String(script[tokenRange])
+        }
+        pending = task
+        let value = await withTaskCancellationHandler(operation: { await task.value }, onCancel: { task.cancel() })
+        pending = nil
+        if let value { cached = (value, Date().addingTimeInterval(1800)) }
+        return value
+    }
+
+    func invalidate(_ token: String) {
+        if cached?.token == token { cached = nil }
     }
 }
