@@ -506,18 +506,63 @@ enum MusicLookup {
         return URL(string: value) ?? url
     }
 
+    static func coverTitleKey(_ value: String) -> String {
+        normalized(artworkTitle(value).replacingOccurrences(of: "['’]", with: "", options: .regularExpression))
+    }
+
+    static func coverArtistsMatch(_ left: String, _ right: String) -> Bool {
+        func credits(_ value: String) -> Set<String> {
+            let separated = cleaned(value).replacingOccurrences(of: #"(?i)\s*(?:,|&|;| feat\.? | featuring | ft\.? )\s*"#,
+                with: "|", options: .regularExpression)
+            return Set(separated.components(separatedBy: "|").map { normalized($0) }.filter { !$0.isEmpty })
+        }
+        return !credits(left).intersection(credits(right)).isEmpty
+    }
+
+    // The modern Apple Music catalog contains releases that legacy iTunes
+    // search fails to return. Reuse the same strict recording/album matching.
+    static func appleStillURLs(_ data: Data, title: String, artist: String, album: String?, durationMs: Int) -> [URL] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = root["results"] as? [String: Any] else { return [] }
+        return ["songs", "albums"].flatMap { type -> [URL] in
+            guard let bucket = results[type] as? [String: Any], let records = bucket["data"] as? [[String: Any]] else { return [] }
+            let converted: [[String: Any]] = records.compactMap { record in
+                guard let attributes = record["attributes"] as? [String: Any],
+                      let art = attributes["artwork"] as? [String: Any], let template = art["url"] as? String else { return nil }
+                var row: [String: Any] = ["artistName": attributes["artistName"] ?? "",
+                    "collectionName": type == "albums" ? attributes["name"] ?? "" : attributes["albumName"] ?? "",
+                    "artworkUrl100": template.replacingOccurrences(of: "{w}", with: "1200").replacingOccurrences(of: "{h}", with: "1200")]
+                if type == "songs" { row["trackName"] = attributes["name"]; row["trackTimeMillis"] = attributes["durationInMillis"] }
+                return row
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: ["results": converted]) else { return [] }
+            return catalogStillURLs(data, title: title, artist: artist, album: album, durationMs: durationMs, albumSearch: type == "albums")
+        }
+    }
+
+    static func directAppleStill(for media: MediaItem) async -> [URL] {
+        guard let token = await AppleArtworkCatalogSession.shared.token(), !Task.isCancelled,
+              let url = query("https://amp-api.music.apple.com/v1/catalog/us/search", [
+                "term": primaryArtist(media.artist) + " " + artworkTitle(songTitle(media.title, artist: media.artist)),
+                "types": "songs", "limit": "25"]),
+              let data = try? await fetch(url, timeout: 10, headers: ["Authorization": "Bearer " + token,
+                "Origin": "https://music.apple.com", "Accept": "application/json"]), !Task.isCancelled else { return [] }
+        return appleStillURLs(data, title: songTitle(media.title, artist: media.artist), artist: media.artist,
+            album: media.album, durationMs: media.durationMs)
+    }
+
     static func catalogStillURLs(_ data: Data, title: String, artist: String, album: String?, durationMs: Int, albumSearch: Bool) -> [URL] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let records = json["results"] as? [[String: Any]] else { return [] }
         let candidates = records.filter { record in
-            guard normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)) else { return false }
+            guard coverArtistsMatch(record["artistName"] as? String ?? "", artist) else { return false }
             if albumSearch {
                 guard let album, !album.isEmpty else { return false }
                 return albumKey(record["collectionName"] as? String ?? "") == albumKey(album)
             }
             // A player response can supply a missing/wrong album name. Exact track,
             // artist and duration still identify a legitimate release of this song.
-            guard normalized(artworkTitle(record["trackName"] as? String ?? "")) == normalized(artworkTitle(title)) else { return false }
+            guard coverTitleKey(record["trackName"] as? String ?? "") == coverTitleKey(title) else { return false }
             let duration = record["trackTimeMillis"] as? Int ?? 0
             return durationMs <= 0 || duration <= 0 || abs(duration - durationMs) <= 12000
         }.sorted { left, right in
@@ -537,10 +582,11 @@ enum MusicLookup {
         catalogStillURLs(data, title: title, artist: artist, album: album, durationMs: durationMs, albumSearch: albumSearch).first
     }
 
-    static func catalogStill(for media: MediaItem, accept: @escaping @Sendable (URL) async -> Bool = { _ in true }, load: @escaping @Sendable (URL) async throws -> Data = { try await fetch($0, timeout: 10) }) async -> URL? {
+    static func catalogStill(for media: MediaItem, accept: @escaping @Sendable (URL) async -> Bool = { _ in true }, load: @escaping @Sendable (URL) async throws -> Data = { try await fetch($0, timeout: 10) }, appleLoad: @escaping @Sendable (MediaItem) async -> [URL] = { await directAppleStill(for: $0) }) async -> URL? {
         let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return nil }
         return await withTaskGroup(of: [URL].self) { group in
+            group.addTask { await appleLoad(media) }
             for (index, country) in ["us", "gb", "ca", "au"].enumerated() {
                 for albumSearch in [false, true] {
                     if albumSearch && (media.album?.isEmpty ?? true) { continue }
@@ -615,7 +661,9 @@ private actor AppleArtworkCatalogSession {
     func token() async -> String? {
         if let cached, cached.expires > Date() { return cached.token }
         if let pending {
-            return await withTaskCancellationHandler(operation: { await pending.value }, onCancel: { pending.cancel() })
+            // Shared initialization also serves motion artwork. A winning still
+            // provider must not cancel another consumer's catalog session.
+            return await pending.value
         }
         let task = Task<String?, Never> {
             guard let page = URL(string: "https://music.apple.com/us/browse"),
@@ -629,7 +677,7 @@ private actor AppleArtworkCatalogSession {
             return String(script[tokenRange])
         }
         pending = task
-        let value = await withTaskCancellationHandler(operation: { await task.value }, onCancel: { task.cancel() })
+        let value = await task.value
         pending = nil
         if let value { cached = (value, Date().addingTimeInterval(1800)) }
         return value

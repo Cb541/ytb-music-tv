@@ -301,6 +301,11 @@ final class PlayerViewModel: ObservableObject {
         catch { if !Task.isCancelled { errorMessage = error.localizedDescription }; return nil }
     }
 
+    func albumCoverURL(for media: MediaItem) async -> URL? {
+        guard let client else { return nil }
+        return try? await client.albumArtwork(media: media)
+    }
+
     func openRelated(_ media: MediaItem, kind: String) async -> Bool {
         browseRequestID = UUID()
         guard let client else { return false }

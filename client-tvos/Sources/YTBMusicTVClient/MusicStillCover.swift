@@ -4,7 +4,8 @@ import ImageIO
 
 enum StillCoverSource: Int, Sendable {
     case musicThumbnail = 1
-    case catalog = 2
+    case album = 2
+    case catalog = 3
 }
 
 // The decoded image is immutable and can be passed from background decoding to the UI.
@@ -22,12 +23,12 @@ enum StillCoverValidation {
     }
 
     static func decode(_ data: Data, url: URL, source: StillCoverSource) -> ValidatedStillCover? {
-        guard !isVideoThumbnail(url),
+        guard source == .album || !isVideoThumbnail(url),
               let encoded = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(encoded, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              min(width, height) >= (source == .catalog ? 800 : 600),
+              min(width, height) >= (source == .catalog ? 800 : 512),
               Double(max(width, height)) / Double(min(width, height)) <= 1.02,
               let image = CGImageSourceCreateThumbnailAtIndex(encoded, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -37,7 +38,7 @@ enum StillCoverValidation {
               ] as CFDictionary) else { return nil }
         // Unverified Music thumbnails can contain a video padded to a square.
         // Catalog artwork may intentionally use black negative space; retain it.
-        if source == .musicThumbnail && hasVideoLetterbox(image) { return nil }
+        if (source == .musicThumbnail || isVideoThumbnail(url)) && hasVideoLetterbox(image) { return nil }
         return ValidatedStillCover(image: image, source: source, url: url)
     }
 

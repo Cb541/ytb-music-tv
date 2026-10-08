@@ -40,3 +40,18 @@ ImageIO tests generate image data and exercise: a valid square cover, a rectangu
 ## Limits
 
 No automatic image-sharpness heuristic can perfectly distinguish intentional soft artwork from a low-detail source. Source identity and actual decoded geometry are used instead. Catalog outages and albums without acceptable source art can produce a placeholder; this avoids displaying an unsuitable substitute.
+
+
+## v79: Recovering legitimate covers after over-filtering
+
+The v78 minimum of 600 decoded pixels rejected valid native 512/544-pixel Music album covers. Also, legacy iTunes search did not return the actual recording for live US queries for MOJO JOJO, Euro$tep and BAD NEWS, while the current Apple Music catalog did. Shared credits (for example ¥$, Kanye West & Ty Dolla $ign) and omitted apostrophes could further prevent matching.
+
+- Add current Apple Music catalog search alongside legacy iTunes search. Validate artist credits, recording title/version, duration and decoded dimensions before accepting an image.
+- Match complete artist-credit tokens rather than requiring the first catalog artist to equal the first Music artist; normalize apostrophe differences for cover titles. Do not accept substring artist matches or alternate live/remix titles.
+- Recover the original Music album header through read-only album browsing when no image is available. The server returns a dedicated optional albumArtworkUrl containing only that header, without substituting input playback or track thumbnails. This request does not change Search navigation or audio resolution.
+- Accept native square Music/album images of at least 512 pixels; still reject tiny images, rectangular video frames and square video thumbnails containing letterbox bars. Video-host images are eligible only when supplied by the album header, and still undergo decoded shape/bar checks.
+- Keep catalog images at the 800-pixel minimum. Request 1200-pixel CDN variants; never crop, stretch, or upscale decoded images. A native fallback cannot replace or cache over a higher-ranked catalog image, and a cached native fallback does not prevent catalog upgrades on later playback.
+
+Live current-catalog queries fetched and visually inspected 1200 × 1200 covers for MOJO JOJO / Playboi Carti, Euro$tep / Eddy West, Invincible / Aminé, Don't Need Friends / NAV and BAD NEWS / Aries. A VULTURES / Kanye West query also returned a 1200 × 1200 cover, but the user's "Vultures Topic" wording does not establish that exact artist/version. These checks prove provider availability in this environment, not playback on the user's Apple TV. No downloaded cover image or public web token is bundled or committed.
+
+Regression coverage adds native 512/544-pixel images, rejection of tiny/rectangular/letterboxed album thumbnails, current-catalog parsing and version/artist/duration rejection, joint artist credits, apostrophe variants, old-server response compatibility, and dedicated album-header selection when a track has a separate video thumbnail.

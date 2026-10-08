@@ -95,6 +95,7 @@ extension MediaItem {
 }
 
 struct MediaSectionResponse: Codable, Equatable {
+    var albumArtworkUrl: URL?
     var title: String?
     var playbackQueue: [MediaItem]?
     var continuation: String?

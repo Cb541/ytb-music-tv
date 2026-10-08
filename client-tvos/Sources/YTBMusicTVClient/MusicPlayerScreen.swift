@@ -131,7 +131,9 @@ struct MusicPlayerScreen: View {
         }
         .ignoresSafeArea()
         .task(id: lookupID) {
-            await assets.load(viewModel.state?.currentMedia, animated: motionArtwork && !reduceMotion)
+            await assets.load(viewModel.state?.currentMedia, animated: motionArtwork && !reduceMotion) { [weak viewModel] media in
+                await viewModel?.albumCoverURL(for: media)
+            }
         }
         .onAppear { focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
         .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }

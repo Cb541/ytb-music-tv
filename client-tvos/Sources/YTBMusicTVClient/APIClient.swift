@@ -50,6 +50,13 @@ struct APIClient {
         try await post("/api/browse/related", body: RelatedBrowseRequest(media: media, kind: kind))
     }
 
+    // Read-only artwork lookup; never alters the user's Search navigation.
+    func albumArtwork(media: MediaItem) async throws -> URL? {
+        let response: MediaSectionResponse = try await post("/api/browse/related",
+            body: RelatedBrowseRequest(media: media, kind: "album"), timeout: 12)
+        return response.albumArtworkUrl
+    }
+
     func resolveSong(media: MediaItem) async throws -> ResolvedStream {
         try await post("/api/resolve-song", body: BrowseRequest(media: media, paged: true, continuation: nil))
     }

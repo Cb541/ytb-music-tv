@@ -237,6 +237,7 @@ export class YouTubeMusicService {
       return {
         id,
         title: album.header?.title?.toString?.() ?? media?.title ?? 'Album',
+        albumArtworkUrl: albumHeaderArtwork(album),
         sections: albumSections(album, media, id),
       };
     }
@@ -934,6 +935,10 @@ export const sameRecording = (candidate, media) => Boolean(candidate.title && ca
   catalogKey(musicTitle(candidate.title, primaryMusicArtist(candidate.artist))) === catalogKey(musicTitle(media?.title, primaryMusicArtist(media?.artist))) &&
   catalogKey(primaryMusicArtist(candidate.artist)) === catalogKey(primaryMusicArtist(media?.artist)) &&
   (!candidate.durationMs || !media?.durationMs || Math.abs(candidate.durationMs - media.durationMs) <= 12000));
+
+// Return only the album header image, never a track's video thumbnail or the
+// incoming playback image. The client independently validates decoded geometry.
+export const albumHeaderArtwork = (album) => bestThumbnailUrl(album?.header?.thumbnails ?? album?.header?.thumbnail) ?? null;
 
 export const albumSections = (album, media, id) => {
   const header = album.header;

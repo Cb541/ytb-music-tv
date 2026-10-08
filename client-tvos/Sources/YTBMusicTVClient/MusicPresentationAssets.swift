@@ -34,7 +34,7 @@ final class MusicPresentationAssets: ObservableObject {
         return cache
     }()
 
-    func load(_ media: MediaItem?, animated: Bool) async {
+    func load(_ media: MediaItem?, animated: Bool, albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL? = { _ in nil }) async {
         let token = UUID(); generation = token; currentStillSource = nil
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         // Keep the previous backdrop until a new cover arrives; clearing it
@@ -48,7 +48,7 @@ final class MusicPresentationAssets: ObservableObject {
         }
         lyricsLoading = true
         async let loadedLyrics: Void = loadLyrics(media, token: token)
-        async let loadedArtwork: Void = loadArtwork(media, animated: animated, token: token)
+        async let loadedArtwork: Void = loadArtwork(media, animated: animated, token: token, albumCover: albumCover)
         _ = await (loadedLyrics, loadedArtwork)
     }
 
@@ -88,11 +88,11 @@ final class MusicPresentationAssets: ObservableObject {
         }
     }
 
-    private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID) async {
-        guard animated else { await loadStillArtwork(media, token: token); return }
+    private func loadArtwork(_ media: MediaItem, animated: Bool, token: UUID, albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL?) async {
+        guard animated else { await loadStillArtwork(media, token: token, albumCover: albumCover); return }
         // Fetch the still cover and animation independently; a slow thumbnail
         // must not postpone finding or starting the motion artwork.
-        async let stillCover: Void = loadStillArtwork(media, token: token)
+        async let stillCover: Void = loadStillArtwork(media, token: token, albumCover: albumCover)
         guard !Task.isCancelled, generation == token else { return }
         let result: MusicArtworkResult
         let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? media.title)
@@ -109,25 +109,36 @@ final class MusicPresentationAssets: ObservableObject {
         // or video thumbnails, so they never replace the validated still cover.
     }
 
-    private func loadStillArtwork(_ media: MediaItem, token: UUID) async {
+    private func loadStillArtwork(_ media: MediaItem, token: UUID, albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL?) async {
         let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? "")
             + ":" + MusicLookup.normalized(MusicLookup.songTitle(media.title, artist: media.artist))
         if let cached = stillCache.object(forKey: cacheKey as NSString) {
             publishStill(cached.cover, token: token)
-            return
+            if cached.cover.source == .catalog { return }
         }
         // Start metadata lookup now; a failing thumbnail must not delay it.
         async let thumbnail: Bool = loadImage(media.artworkUrl, source: .musicThumbnail, token: token)
+        async let nativeAlbum: Void = loadAlbumArtwork(media, token: token, cacheKey: cacheKey, albumCover: albumCover)
         _ = await MusicLookup.catalogStill(for: media) { [weak self] url in
             guard let self else { return false }
             return await self.loadImage(url, source: .catalog, token: token, cacheKey: cacheKey)
         }
-        _ = await thumbnail
+        _ = await (thumbnail, nativeAlbum)
+    }
+
+    private func loadAlbumArtwork(_ media: MediaItem, token: UUID, cacheKey: String,
+        albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL?) async {
+        // Give the cheap/current cover and catalog a head start. Only ask the
+        // server for the album header when the player still has no usable image.
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        guard generation == token, !Task.isCancelled, artworkImage == nil else { return }
+        guard let url = await albumCover(media), generation == token, !Task.isCancelled else { return }
+        await loadImage(url, source: .album, token: token, cacheKey: cacheKey)
     }
 
     @discardableResult
     private func loadImage(_ url: URL?, source: StillCoverSource, token: UUID, cacheKey: String? = nil) async -> Bool {
-        guard let url, !StillCoverValidation.isVideoThumbnail(url) else { return false }
+        guard let url, source == .album || !StillCoverValidation.isVideoThumbnail(url) else { return false }
         let large = MusicLookup.highResolutionStillURL(url)
         let candidates = large == url ? [url] : [large, url]
         for candidate in candidates {
@@ -142,27 +153,29 @@ final class MusicPresentationAssets: ObservableObject {
                 print("Rejected still cover from \(candidate.host ?? "unknown"): invalid size, shape or video bars")
                 continue
             }
-            if let cacheKey, source == .catalog {
+            let published = publishStill(cover, token: token)
+            if published, let cacheKey, source != .musicThumbnail {
                 stillCache.setObject(CachedCover(cover), forKey: cacheKey as NSString,
                     cost: cover.image.bytesPerRow * cover.image.height)
             }
-            publishStill(cover, token: token)
             return true
         }
         return false
     }
 
-    private func publishStill(_ cover: ValidatedStillCover, token: UUID) {
-        guard generation == token else { return }
-        if let currentStillSource, currentStillSource.rawValue > cover.source.rawValue { return }
+    @discardableResult
+    private func publishStill(_ cover: ValidatedStillCover, token: UUID) -> Bool {
+        guard generation == token else { return false }
+        if let currentStillSource, currentStillSource.rawValue > cover.source.rawValue { return false }
         if currentStillSource == cover.source, let current = artworkImage?.cgImage,
-           current.width * current.height > cover.image.width * cover.image.height { return }
+           current.width * current.height > cover.image.width * cover.image.height { return false }
         currentStillSource = cover.source
         let image = UIImage(cgImage: cover.image)
         artworkImage = image
         backgroundImage = image
         colors = Self.palette(image)
         backgroundVeil = Self.balancedVeil(image)
+        return true
     }
 
     static func balancedVeil(_ image: UIImage) -> Double {

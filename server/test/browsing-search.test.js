@@ -184,3 +184,17 @@ test('video matching tolerates intros and redirects performances to the studio r
   const upload = { ...video, videoId: "ddddddddddd", artist: "Concert channel", title: "Artist - Song (Live at Festival 2024)" };
   assert.equal(await api.officialSong(upload), official);
 });
+
+
+test('album artwork uses the header, not the input or individual video thumbnails', async () => {
+  const { albumHeaderArtwork } = await import('../src/services/youtube-service.js');
+  const album = { header: { thumbnails: [{ url: 'https://img.example/tiny.jpg', width: 120, height: 120 },
+    { url: 'https://img.example/header.jpg', width: 544, height: 544 }] },
+    contents: [{ thumbnail: [{ url: 'https://i.ytimg.com/vi/video/maxresdefault.jpg' }] }] };
+  assert.equal(albumHeaderArtwork(album), 'https://img.example/header.jpg');
+  assert.equal(albumHeaderArtwork({ contents: album.contents }), null);
+  const api = new YouTubeMusicService({ configStore: { get: () => ({ youtube: {} }) }, sessionStore: { get: () => ({}) },
+    clientFactory: async () => ({ music: { getAlbum: async () => album } }) });
+  const result = await api.browse({ id: 'MPRalbum', title: 'Album', artworkUrl: 'https://i.ytimg.com/vi/video/maxresdefault.jpg' });
+  assert.equal(result.albumArtworkUrl, 'https://img.example/header.jpg');
+});
