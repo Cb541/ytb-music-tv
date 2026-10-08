@@ -7,5 +7,6 @@ compiler="${SWIFTC:-swiftc}"
 "$compiler" "$script_dir/Sources/YTBMusicTVClient/Models.swift" \
   "$script_dir/Sources/YTBMusicTVClient/MusicLyrics.swift" \
   "$script_dir/Sources/YTBMusicTVClient/MusicLookup.swift" \
+  "$script_dir/Sources/YTBMusicTVClient/MusicStillCover.swift" \
   "$script_dir/Tests/PlaybackAndLyricsTests.swift" -o "$build_dir/test-models"
 "$build_dir/test-models"

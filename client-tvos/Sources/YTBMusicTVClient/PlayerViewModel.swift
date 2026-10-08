@@ -1699,25 +1699,7 @@ private enum PlaybackError: LocalizedError {
 }
 
 private func merge(_ original: MediaItem, with resolved: MediaItem?) -> MediaItem {
-    guard var resolved else { return original }
-    resolved.id = original.id
-    resolved.videoId = original.videoId ?? resolved.videoId
-    resolved.browseId = original.browseId ?? resolved.browseId
-    resolved.playlistId = original.playlistId ?? resolved.playlistId
-    resolved.type = original.type ?? resolved.type
-    resolved.title = resolved.title.isEmpty ? original.title : resolved.title
-    resolved.artist = resolved.artist.isEmpty ? original.artist : resolved.artist
-    resolved.album = resolved.album ?? original.album
-    resolved.artistBrowseId = original.artistBrowseId ?? resolved.artistBrowseId
-    resolved.albumBrowseId = original.albumBrowseId ?? resolved.albumBrowseId
-    resolved.durationMs = PlaybackTiming.metadataDuration(originalMs: original.durationMs, resolvedMs: resolved.durationMs)
-    resolved.artworkUrl = resolved.artworkUrl ?? original.artworkUrl
-    resolved.sourceUrl = resolved.sourceUrl ?? original.sourceUrl
-    resolved.tags = resolved.tags.isEmpty ? original.tags : resolved.tags
-    if resolved.likeStatus == "INDIFFERENT", original.likeStatus != "INDIFFERENT" {
-        resolved.likeStatus = original.likeStatus
-    }
-    return resolved
+    original.mergingPlaybackMetadata(resolved)
 }
 
 private func composeHomeSections(

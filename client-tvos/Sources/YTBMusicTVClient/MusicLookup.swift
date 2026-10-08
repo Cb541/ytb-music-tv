@@ -506,41 +506,62 @@ enum MusicLookup {
         return URL(string: value) ?? url
     }
 
-    static func catalogStillURL(_ data: Data, title: String, artist: String, album: String?, durationMs: Int, albumSearch: Bool) -> URL? {
+    static func catalogStillURLs(_ data: Data, title: String, artist: String, album: String?, durationMs: Int, albumSearch: Bool) -> [URL] {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let records = json["results"] as? [[String: Any]] else { return nil }
-        if albumSearch {
-            guard let album, !album.isEmpty else { return nil }
-            return records.first(where: {
-                normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(primaryArtist(artist))
-                    && albumKey($0["collectionName"] as? String ?? "") == albumKey(album)
-            }).flatMap { validURL($0["artworkUrl100"] ?? $0["artworkUrl60"]) }.map(highResolutionStillURL)
+              let records = json["results"] as? [[String: Any]] else { return [] }
+        let candidates = records.filter { record in
+            guard normalized(primaryArtist(record["artistName"] as? String ?? "")) == normalized(primaryArtist(artist)) else { return false }
+            if albumSearch {
+                guard let album, !album.isEmpty else { return false }
+                return albumKey(record["collectionName"] as? String ?? "") == albumKey(album)
+            }
+            // A player response can supply a missing/wrong album name. Exact track,
+            // artist and duration still identify a legitimate release of this song.
+            guard normalized(artworkTitle(record["trackName"] as? String ?? "")) == normalized(artworkTitle(title)) else { return false }
+            let duration = record["trackTimeMillis"] as? Int ?? 0
+            return durationMs <= 0 || duration <= 0 || abs(duration - durationMs) <= 12000
+        }.sorted { left, right in
+            let leftMatch = album != nil && albumKey(left["collectionName"] as? String ?? "") == albumKey(album ?? "")
+            let rightMatch = album != nil && albumKey(right["collectionName"] as? String ?? "") == albumKey(album ?? "")
+            return leftMatch && !rightMatch
         }
-        guard let match = catalogAlbum(data, title: title, artist: artist, album: album, durationMs: durationMs) else { return nil }
-        return records.first(where: {
-            normalized(primaryArtist($0["artistName"] as? String ?? "")) == normalized(primaryArtist(artist))
-                && normalized(artworkTitle($0["trackName"] as? String ?? "")) == normalized(artworkTitle(title))
-                && albumKey($0["collectionName"] as? String ?? "") == albumKey(match.name)
-        }).flatMap { validURL($0["artworkUrl100"] ?? $0["artworkUrl60"]) }.map(highResolutionStillURL)
+        var seen = Set<URL>()
+        return candidates.compactMap { record in
+            guard let url = validURL(record["artworkUrl100"] ?? record["artworkUrl60"]) else { return nil }
+            let large = highResolutionStillURL(url)
+            return seen.insert(large).inserted ? large : nil
+        }
     }
 
-    static func catalogStill(for media: MediaItem) async -> URL? {
+    static func catalogStillURL(_ data: Data, title: String, artist: String, album: String?, durationMs: Int, albumSearch: Bool) -> URL? {
+        catalogStillURLs(data, title: title, artist: artist, album: album, durationMs: durationMs, albumSearch: albumSearch).first
+    }
+
+    static func catalogStill(for media: MediaItem, accept: @escaping @Sendable (URL) async -> Bool = { _ in true }, load: @escaping @Sendable (URL) async throws -> Data = { try await fetch($0, timeout: 10) }) async -> URL? {
         let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return nil }
-        return await withTaskGroup(of: URL?.self) { group in
-            for (index, country) in ["us", "gb", "ca"].enumerated() {
+        return await withTaskGroup(of: [URL].self) { group in
+            for (index, country) in ["us", "gb", "ca", "au"].enumerated() {
                 for albumSearch in [false, true] {
                     if albumSearch && (media.album?.isEmpty ?? true) { continue }
                     group.addTask {
-                        if index > 0 { try? await Task.sleep(nanoseconds: UInt64(index) * 500_000_000) }
+                        if index > 0 { try? await Task.sleep(nanoseconds: UInt64(index) * 750_000_000) }
                         guard !Task.isCancelled,
-                              let url = query("https://itunes.apple.com/search", ["term": artist + " " + (albumSearch ? media.album ?? title : title), "entity": albumSearch ? "album" : "song", "country": country, "limit": "20"]),
-                              let data = try? await fetch(url, timeout: 4), !Task.isCancelled else { return nil }
-                        return catalogStillURL(data, title: title, artist: artist, album: media.album, durationMs: media.durationMs, albumSearch: albumSearch)
+                              let url = query("https://itunes.apple.com/search", ["term": artist + " " + (albumSearch ? media.album ?? title : title), "entity": albumSearch ? "album" : "song", "country": country, "limit": "50"]),
+                              let data = try? await load(url), !Task.isCancelled else { return [] }
+                        return catalogStillURLs(data, title: title, artist: artist, album: media.album, durationMs: media.durationMs, albumSearch: albumSearch)
                     }
                 }
             }
-            for await cover in group { if let cover { group.cancelAll(); return cover } }
+            var tried = Set<URL>()
+            for await covers in group {
+                for cover in covers.prefix(4) where tried.insert(cover).inserted {
+                    guard !Task.isCancelled else { group.cancelAll(); return nil }
+                    // Cancel other providers only after an image decodes and passes
+                    // validation, not when a provider merely returns a URL.
+                    if await accept(cover) { group.cancelAll(); return cover }
+                }
+            }
             return nil
         }
     }

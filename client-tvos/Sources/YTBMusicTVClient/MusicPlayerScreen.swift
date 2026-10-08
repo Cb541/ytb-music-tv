@@ -171,7 +171,7 @@ struct MusicPlayerScreen: View {
     private func artwork(side: CGFloat) -> some View {
         ZStack {
             if let image = assets.artworkImage {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(uiImage: image).resizable().scaledToFit()
             } else {
                 RoundedRectangle(cornerRadius: 18).fill(.white.opacity(0.08))
                 Image(systemName: "music.note").font(.system(size: 110)).foregroundStyle(.white.opacity(0.3))

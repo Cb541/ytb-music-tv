@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import ImageIO
 
 @main
 enum PlaybackAndLyricsTests {
@@ -78,6 +80,51 @@ enum PlaybackAndLyricsTests {
         precondition(MusicLookup.shouldReplaceStill(width: 1200, height: 1200, currentWidth: 2000, currentHeight: 2000, currentIsCatalog: false, candidateIsCatalog: true))
         precondition(!MusicLookup.shouldReplaceStill(width: 2000, height: 2000, currentWidth: 1200, currentHeight: 1200, currentIsCatalog: true, candidateIsCatalog: false))
         precondition(!MusicLookup.shouldReplaceStill(width: 100, height: 100, currentWidth: 1200, currentHeight: 1200, currentIsCatalog: false, candidateIsCatalog: true))
+        var catalogMedia = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"catalog-song","videoId":"catalog-song","type":"song","title":"Song","artist":"Artist","album":"Album","albumBrowseId":"MPRalbum","artworkUrl":"https://lh3.googleusercontent.com/album=w544-h544","durationMs":180000}"#.utf8))
+        var playerMetadata = catalogMedia
+        playerMetadata.artworkUrl = URL(string: "https://i.ytimg.com/vi/catalog-song/hqdefault.jpg")
+        playerMetadata.album = "Wrong player album"
+        playerMetadata.artist = "Uploader"
+        let mergedCover = catalogMedia.mergingPlaybackMetadata(playerMetadata)
+        precondition(mergedCover.artworkUrl == catalogMedia.artworkUrl && mergedCover.album == "Album" && mergedCover.artist == "Artist")
+        catalogMedia.artworkUrl = nil
+        precondition(catalogMedia.mergingPlaybackMetadata(playerMetadata).artworkUrl == playerMetadata.artworkUrl)
+        let genericImageURL = URL(string: "https://lh3.googleusercontent.com/square=w1200-h1200")!
+        func imageData(width: Int, height: Int, bars: Bool = false, black: Bool = false) -> Data {
+            let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            if !black {
+                let inset = bars ? height / 5 : 0
+                context.setFillColor(CGColor(red: 0.1, green: 0.7, blue: 0.3, alpha: 1))
+                context.fill(CGRect(x: 0, y: inset, width: width, height: height - inset * 2))
+            }
+            let data = NSMutableData()
+            let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+            CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+            precondition(CGImageDestinationFinalize(destination))
+            return data as Data
+        }
+        let squareCover = imageData(width: 1200, height: 1200)
+        precondition(StillCoverValidation.decode(squareCover, url: genericImageURL, source: .musicThumbnail) != nil)
+        precondition(StillCoverValidation.decode(imageData(width: 1200, height: 675), url: genericImageURL, source: .musicThumbnail) == nil)
+        precondition(StillCoverValidation.decode(imageData(width: 1200, height: 1200, bars: true), url: genericImageURL, source: .musicThumbnail) == nil)
+        precondition(StillCoverValidation.decode(imageData(width: 120, height: 120), url: genericImageURL, source: .catalog) == nil)
+        precondition(StillCoverValidation.decode(Data("not an image".utf8), url: genericImageURL, source: .catalog) == nil)
+        precondition(StillCoverValidation.decode(squareCover, url: playerMetadata.artworkUrl!, source: .musicThumbnail) == nil)
+        precondition(StillCoverValidation.decode(imageData(width: 1200, height: 1200, black: true), url: genericImageURL, source: .musicThumbnail) != nil)
+        // Real album designs can legitimately use black negative space.
+        precondition(StillCoverValidation.decode(imageData(width: 1200, height: 1200, bars: true), url: genericImageURL, source: .catalog) != nil)
+        let noCoverFirst = Data(#"{"results":[{"artistName":"Artist","trackName":"Song","collectionName":"Album","trackTimeMillis":180000},{"artistName":"Artist","trackName":"Song","collectionName":"Album","trackTimeMillis":180000,"artworkUrl100":"https://is1-ssl.mzstatic.com/good/100x100bb.jpg"}]}"#.utf8)
+        precondition(MusicLookup.catalogStillURLs(noCoverFirst, title: "Song", artist: "Artist", album: "Album", durationMs: 180000, albumSearch: false).count == 1)
+        precondition(MusicLookup.catalogStillURLs(noCoverFirst, title: "Song", artist: "Artist", album: "Wrong player album", durationMs: 180000, albumSearch: false).count == 1)
+        precondition(MusicLookup.catalogStillURLs(noCoverFirst, title: "Song (Live)", artist: "Artist", album: "Album", durationMs: 180000, albumSearch: false).isEmpty)
+        let coverFailoverData = Data(#"{"results":[{"artistName":"Artist","trackName":"Song","collectionName":"Album","trackTimeMillis":180000,"artworkUrl100":"https://is1-ssl.mzstatic.com/bad/100x100bb.jpg"},{"artistName":"Artist","trackName":"Song","collectionName":"Album","trackTimeMillis":180000,"artworkUrl100":"https://is1-ssl.mzstatic.com/good/100x100bb.jpg"}]}"#.utf8)
+        let selectedStill = await MusicLookup.catalogStill(for: catalogMedia, accept: { url in
+            url.path.contains("/good/")
+        }, load: { _ in coverFailoverData })
+        precondition(selectedStill?.path == "/good/1200x1200bb.jpg")
         let candidates = try JSONDecoder().decode([LRCLIBRecord].self, from: Data(#"[{"trackName":"Song","artistName":"Artist","duration":180,"plainLyrics":"Plain"},{"trackName":"Song","artistName":"Artist","duration":188,"syncedLyrics":"[00:01.00]Timed"},{"trackName":"Song (Live)","artistName":"Artist","duration":180,"syncedLyrics":"[00:00.00]Wrong version"}]"#.utf8))
         let best = MusicLookup.bestLyrics(candidates, title: "Song", artist: "Artist", duration: 180)
         precondition(best.synchronized && best.lines.first?.text == "Timed")
