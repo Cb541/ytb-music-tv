@@ -811,7 +811,8 @@ private struct SearchView: View {
                 Text("Songs").tag("song")
                 Text("Artists").tag("artist")
                 Text("Albums").tag("album")
-                Text("Playlists").tag("playlist")
+                Text("Featured Playlists").tag("featured_playlist")
+                Text("Community Playlists").tag("community_playlist")
             }
             .pickerStyle(.segmented)
             .onChange(of: searchType) {
@@ -821,7 +822,11 @@ private struct SearchView: View {
                 if viewModel.searchPageTitle == nil && trimmed == viewModel.searchQuery && searchType == viewModel.searchCategory { return }
                 runSearch()
             }
-            if searchType == "playlist" { Text("Public and community playlists").font(.caption).foregroundStyle(.secondary) }
+            if searchType == "featured_playlist" {
+                Text("Official playlists curated by YouTube Music").font(.caption).foregroundStyle(.secondary)
+            } else if searchType == "community_playlist" {
+                Text("Playlists created by listeners").font(.caption).foregroundStyle(.secondary)
+            }
             MediaSectionList(sections: visibleSections, l10n: l10n, select: select, playlist: viewModel.searchPlaylist, viewModel: viewModel)
             if visibleSections.isEmpty && !viewModel.isSearching && viewModel.searchPageTitle != nil {
                 Text("No matching items on this page.").foregroundStyle(.secondary)
@@ -842,7 +847,7 @@ private struct SearchView: View {
 
     private func restoreSearchContext() {
         query = viewModel.searchPageTitle == nil ? viewModel.searchQuery : ""
-        searchType = viewModel.searchPageTitle == nil ? viewModel.searchCategory : "all"
+        searchType = viewModel.searchPageTitle == nil ? (viewModel.searchCategory == "playlist" ? "community_playlist" : viewModel.searchCategory) : "all"
     }
 
     private func runSearch() {

@@ -534,7 +534,7 @@ test('category search and new read-only browsing routes forward their parameters
     playlistSearch: async (media, query) => { calls.push(['playlist', media.id, query]); return { sections: [], playbackQueue: [] }; },
     browseRelated: async (media, kind) => { calls.push(['related', media.artist, kind]); return { sections: [] }; },
   });
-  for (const type of ['all', 'song', 'artist', 'album', 'playlist']) {
+  for (const type of ['all', 'song', 'artist', 'album', 'playlist', 'featured_playlist', 'community_playlist']) {
     const res = createResponse(); await router(createRequest('GET', '/api/search?q=Artist&type=' + type), res); assert.equal(res.status, 200);
   }
   for (const [path, body] of [['/api/playlist/search', { media: { id: 'PLtest' }, query: 'song' }], ['/api/browse/related', { media: { artist: 'Artist' }, kind: 'artist' }]]) {

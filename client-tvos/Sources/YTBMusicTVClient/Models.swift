@@ -36,6 +36,7 @@ struct MediaItem: Codable, Identifiable, Equatable {
     var videoId: String?
     var browseId: String?
     var playlistId: String?
+    var playlistCategory: String?
     var type: String?
     var title: String
     var artist: String
@@ -183,7 +184,7 @@ extension KeyedDecodingContainer {
 
 extension MediaItem {
     enum CodingKeys: String, CodingKey {
-        case id, videoId, browseId, playlistId, type, title, artist, album, durationMs
+        case id, videoId, browseId, playlistId, playlistCategory, type, title, artist, album, durationMs
         case artworkUrl, streamUrl, sourceUrl, playbackUrl, likeStatus, tags, artistBrowseId, albumBrowseId
     }
 
@@ -193,6 +194,7 @@ extension MediaItem {
         videoId = try? c.decode(String.self, forKey: .videoId)
         browseId = try? c.decode(String.self, forKey: .browseId)
         playlistId = try? c.decode(String.self, forKey: .playlistId)
+        playlistCategory = try? c.decode(String.self, forKey: .playlistCategory)
         type = try? c.decode(String.self, forKey: .type)
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         artist = (try? c.decode(String.self, forKey: .artist)) ?? ""
@@ -243,7 +245,9 @@ extension ResolvedStream {
 func filteredBrowseSections(_ sections: [MediaSection], category: String, query: String) -> [MediaSection] {
     sections.compactMap { section in
         let items = section.items.filter { media in
+            let isPlaylistTab = category == "featured_playlist" || category == "community_playlist"
             let matchesCategory = category == "all" || media.type == category || (category == "song" && media.isPlayable)
+                || (isPlaylistTab && media.type == "playlist" && media.playlistCategory == category)
             return matchesCategory && media.matchesSearch(query)
         }
         return items.isEmpty ? nil : MediaSection(id: section.id, title: section.title, items: items)

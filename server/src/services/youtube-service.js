@@ -1,4 +1,4 @@
-import { Innertube, Parser, Platform, UniversalCache, YTNodes } from 'youtubei.js';
+import { Innertube, Parser, Platform, UniversalCache, YTNodes, YTMusic } from 'youtubei.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -20,6 +20,13 @@ Platform.shim.eval = (data, env) => {
   const code = `${data.output}\nreturn { ${properties.join(', ')} }`;
   // youtubei.js requires a host-provided evaluator for player signature functions.
   return new Function(code)();
+};
+
+export const playlistSearchParams = (category) => {
+  const prefix = 'EgeKAQQoA', suffix = 'BagwQDhAKEAMQBBAJEAU%3D';
+  if (category === 'featured_playlist') return prefix + 'Dg' + suffix;
+  if (category === 'community_playlist') return prefix + 'EA' + suffix;
+  throw new Error('Invalid playlist search category');
 };
 
 export class YouTubeMusicService {
@@ -75,6 +82,23 @@ export class YouTubeMusicService {
 
   async search(query, filters = {}) {
     const client = await this.#client();
+    if (filters.type === 'featured_playlist' || filters.type === 'community_playlist') {
+      // youtubei.js 17 exposes only a boolean playlist filter. Use Music's
+      // distinct native filters, as documented in ytmusicapi's search parser.
+      const response = await client.actions.execute('/search', {
+        query, params: playlistSearchParams(filters.type), client: 'YTMUSIC',
+      });
+      const result = normalizeSearch(new YTMusic.Search(response, client.actions, true));
+      return {
+        ...result,
+        sections: result.sections.map(section => ({
+          ...section,
+          items: section.items.filter(item => item.type === 'playlist' &&
+              (!item.playlistCategory || item.playlistCategory === filters.type))
+            .map(item => ({ ...item, playlistCategory: filters.type })),
+        })).filter(section => section.items.length),
+      };
+    }
     const result = await client.music.search(query, filters);
     return normalizeSearch(result);
   }

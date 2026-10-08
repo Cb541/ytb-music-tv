@@ -198,3 +198,55 @@ test('album artwork uses the header, not the input or individual video thumbnail
   const result = await api.browse({ id: 'MPRalbum', title: 'Album', artworkUrl: 'https://i.ytimg.com/vi/video/maxresdefault.jpg' });
   assert.equal(result.albumArtworkUrl, 'https://img.example/header.jpg');
 });
+
+
+const searchPlaylistResponse = (label, id = 'VLPLchosen') => {
+  const entry = (name, browseId, pageType) => ({ musicResponsiveListItemRenderer: {
+    navigationEndpoint: { browseEndpoint: { browseId,
+      browseEndpointContextSupportedConfigs: { browseEndpointContextMusicConfig: { pageType } } } },
+    flexColumns: [{ musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: name }] } } }],
+    thumbnail: { musicThumbnailRenderer: { thumbnail: { thumbnails: [{ url: 'https://img.example/playlist.jpg', width: 1000, height: 1000 }] } } },
+  } });
+  const shelf = (title, entries) => ({ musicShelfRenderer: { title: { runs: [{ text: title }] }, contents: entries } });
+  return { data: { contents: { tabbedSearchResultsRenderer: { tabs: [{ tabRenderer: { selected: true,
+    content: { sectionListRenderer: { contents: [
+      shelf(label, [entry('Road Trip', id, 'MUSIC_PAGE_TYPE_PLAYLIST')]),
+      shelf(label === 'Featured playlists' ? 'Community playlists' : 'Featured playlists', [entry('Other category', 'VLPLother', 'MUSIC_PAGE_TYPE_PLAYLIST')]),
+      shelf('Albums', [entry('Unrelated album', 'MPRalbum', 'MUSIC_PAGE_TYPE_ALBUM')]),
+    ] } },
+  } }] } } } };
+};
+
+test('featured and community searches use distinct native filters and retain navigable playlists and covers', async () => {
+  const calls = [];
+  const api = new YouTubeMusicService({ configStore: { get: () => ({ youtube: {} }) }, sessionStore: { get: () => ({}) },
+    clientFactory: async () => ({ actions: { execute: async (path, body) => {
+      calls.push({ path, body });
+      return searchPlaylistResponse(calls.length === 1 ? 'Featured playlists' : 'Community playlists');
+    } }, music: { search: async () => { throw Error('Combined playlist search must not be used'); } } }) });
+  for (const category of ['featured_playlist', 'community_playlist']) {
+    const result = await api.search('road trip', { type: category });
+    const items = result.sections.flatMap(section => section.items);
+    assert.equal(items.length, 1); assert.equal(items[0].type, 'playlist');
+    assert.equal(items[0].playlistCategory, category);
+    assert.equal(items[0].playlistId, 'VLPLchosen'); assert.equal(items[0].browseId, 'VLPLchosen');
+    assert.equal(items[0].artworkUrl, 'https://img.example/playlist.jpg');
+  }
+  assert.equal(calls[0].path, '/search'); assert.equal(calls[1].path, '/search');
+  assert.equal(calls[0].body.query, 'road trip'); assert.equal(calls[0].body.client, 'YTMUSIC');
+  assert.notEqual(calls[0].body.params, calls[1].body.params);
+});
+
+test('playlist categories are stamped from native shelves without guessing creator names', () => {
+  const result = normalizeSearch({ contents: ['Featured playlists', 'Community playlists', 'Playlists'].map(title => ({
+    title, contents: [{ id: 'PLtest', item_type: 'playlist', title: 'Playlist', author: { name: 'YouTube Music' } }],
+  })) });
+  assert.deepEqual(result.sections.map(section => section.items[0].playlistCategory), ['featured_playlist', 'community_playlist', undefined]);
+});
+
+test('a failed category search is not replaced with a misleading combined result', async () => {
+  const api = new YouTubeMusicService({ configStore: { get: () => ({ youtube: {} }) }, sessionStore: { get: () => ({}) },
+    clientFactory: async () => ({ actions: { execute: async () => { throw Error('Search unavailable'); } },
+      music: { search: async () => { throw Error('Unexpected mixed search'); } } }) });
+  await assert.rejects(api.search('rock', { type: 'featured_playlist' }), /Search unavailable/);
+});

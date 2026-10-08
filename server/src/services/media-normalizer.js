@@ -75,7 +75,11 @@ export const normalizeSection = (section, index = 0) => {
   return {
     id: slugify(title) || `section-${index}`,
     title,
-    items: contents,
+    items: contents.map(item => {
+      const category = /^featured playlists$/i.test(title) ? 'featured_playlist'
+        : /^community playlists$/i.test(title) ? 'community_playlist' : null;
+      return category && item.type === 'playlist' ? { ...item, playlistCategory: category } : item;
+    }),
   };
 };
 
