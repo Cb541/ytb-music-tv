@@ -110,7 +110,8 @@ final class MusicPresentationAssets: ObservableObject {
     }
 
     private func loadStillArtwork(_ media: MediaItem, token: UUID) async {
-        let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? media.title)
+        let cacheKey = MusicLookup.normalized(media.artist) + ":" + MusicLookup.albumKey(media.album ?? "")
+            + ":" + MusicLookup.normalized(MusicLookup.songTitle(media.title, artist: media.artist))
         if let cached = stillCache.object(forKey: cacheKey as NSString) {
             publishStill(cached.cover, token: token)
             return
