@@ -725,6 +725,7 @@ private struct MediaCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 12) {
                 ArtworkThumb(url: media.artworkUrl, size: 245, cornerRadius: 18)
+                    .compositingGroup()
                     .overlay(alignment: .bottomTrailing) {
                         Image(systemName: media.isPlayable ? "play.fill" : "chevron.right")
                             .font(.system(size: 22, weight: .bold))
@@ -743,7 +744,16 @@ private struct MediaCard: View {
             }
             .frame(width: 245, alignment: .leading)
             .padding(14)
-            .glassSurface(cornerRadius: 22, emphasized: focused)
+            // Browse cards must not refract their neighbors' artwork through
+            // Liquid Glass. Clip and composite each card before focus scaling.
+            .background(Color(white: focused ? 0.12 : 0.045),
+                        in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(.white.opacity(focused ? 0.58 : 0.08), lineWidth: focused ? 2 : 1)
+            }
+            .compositingGroup()
         }
         .buttonStyle(RemoteButtonStyle())
         .focusEffectDisabled()
@@ -935,6 +945,7 @@ private struct TrackRow: View {
         Button(action: action) {
             HStack(spacing: 18) {
                 ArtworkThumb(url: media.artworkUrl, size: 104, cornerRadius: 6)
+                    .compositingGroup()
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(media.title)
