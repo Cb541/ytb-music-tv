@@ -566,7 +566,8 @@ struct MusicWarpedArtwork: UIViewRepresentable {
         }
 
         private func render(at time: CFTimeInterval = CACurrentMediaTime()) {
-            guard window != nil, bounds.width > 0, bounds.height > 0, let commandQueue,
+            guard window != nil, UIApplication.shared.applicationState != .background,
+                  bounds.width > 0, bounds.height > 0, let commandQueue,
                   frameSlots.wait(timeout: .now()) == .success else { return }
             var submitted = false
             defer { if !submitted { frameSlots.signal() } }
