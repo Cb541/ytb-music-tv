@@ -3,7 +3,7 @@ import AudioToolbox
 import CoreMedia
 import MediaToolbox
 import ObjectiveC
-import Synchronization
+import os
 
 // Real-time mid/side width adjustment for decoded AVPlayer audio.
 // On tvOS 27, the special track-mix audio tap works for remote/HLS streams,
@@ -13,10 +13,10 @@ import Synchronization
 // modest side gain and fixed headroom; no reverb, Haas delay, EQ, or phase shift.
 // The effect works on existing stereo content (mono content remains mono).
 private final class StereoWidthTapState: NSObject {
-    private let effectEnabled = Atomic<Bool>(false)
+    private let effectEnabled = OSAllocatedUnfairLock(initialState: false)
 
     func setEnabled(_ value: Bool) {
-        effectEnabled.store(value, ordering: .relaxed)
+        effectEnabled.withLock { $0 = value }
     }
 
     let sideGain: Float
@@ -46,7 +46,7 @@ private final class StereoWidthTapState: NSObject {
     }
 
     func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
-        guard effectEnabled.load(ordering: .relaxed) else { return }
+        guard effectEnabled.withLock({ $0 }) else { return }
         guard frames > 0, format.mChannelsPerFrame == 2,
               format.mFormatID == kAudioFormatLinearPCM else { return }
         let flags = format.mFormatFlags
