@@ -1,6 +1,7 @@
 import AVKit
 import CoreImage.CIFilterBuiltins
 import Foundation
+import Metal
 import SwiftUI
 import UIKit
 
@@ -28,6 +29,7 @@ final class MusicPresentationAssets: ObservableObject {
     private var generation: UUID { backdropState.generation }
     private var lastVeilTime = 0.0
     private var lastAccentTime = 0.0
+    private let paletteContext = CIContext(options: [.cacheIntermediates: false])
     private var currentStillSource: StillCoverSource?
     private final class CachedCover: NSObject {
         let cover: ValidatedStillCover
@@ -179,22 +181,27 @@ final class MusicPresentationAssets: ObservableObject {
         let image = UIImage(cgImage: cover.image)
         artworkImage = image
         if backdropState.acceptsStill(token) {
-            backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: false)
+            backdrop.frame = MusicBackdropFrame(image: CIImage(cgImage: cover.image), sourceID: token, live: false)
             colors = Self.palette(image)
             backgroundVeil = Self.balancedVeil(image)
         }
         return true
     }
 
-    func receiveMotionFrame(_ image: UIImage, url: URL, token: UUID) {
+    func receiveMotionFrame(_ image: CIImage, url: URL, token: UUID) {
         guard motionURL == url, backdropState.acceptLive(token) else { return }
         backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: true)
         // Follow major brightness changes slowly, without making the veil pulse.
         let now = CACurrentMediaTime()
-        updateMotionAccent(image, at: now)
+        // Only palette/contrast analysis needs CPU pixels. Keep video frames
+        // on the GPU, and make this small copy below three times per second.
+        guard now - lastAccentTime >= 0.4 else { return }
+        guard let cg = paletteContext.createCGImage(image, from: image.extent) else { return }
+        let sample = UIImage(cgImage: cg)
+        updateMotionAccent(sample, at: now)
         if now - lastVeilTime >= 0.5 {
             lastVeilTime = now
-            let target = Self.balancedVeil(image)
+            let target = Self.balancedVeil(sample)
             if abs(target - backgroundVeil) >= 0.005 {
                 backgroundVeil += min(0.03, max(-0.03, target - backgroundVeil))
             }
@@ -311,7 +318,7 @@ final class MusicPresentationAssets: ObservableObject {
 }
 
 struct MusicBackdropFrame {
-    let image: UIImage
+    let image: CIImage
     let sourceID: UUID
     let live: Bool
 }
@@ -326,7 +333,7 @@ final class MusicArtworkBackdrop: ObservableObject {
 struct MusicMotionArtwork: UIViewRepresentable {
     let url: URL
     let active: Bool
-    let onFrame: @MainActor (UIImage) -> Void
+    let onFrame: @MainActor (CIImage) -> Void
 
     final class ArtworkView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
@@ -335,11 +342,10 @@ struct MusicMotionArtwork: UIViewRepresentable {
         var looper: AVPlayerLooper?
         var displayObserver: NSKeyValueObservation?
         var url: URL?
-        var onFrame: (@MainActor (UIImage) -> Void)?
+        var onFrame: (@MainActor (CIImage) -> Void)?
         private var displayLink: CADisplayLink?
         private var outputItem: AVPlayerItem?
         private var output: AVPlayerItemVideoOutput?
-        private let frameContext = CIContext(options: [.cacheIntermediates: false])
         override init(frame: CGRect) {
             super.init(frame: frame)
             player.isMuted = true
@@ -355,7 +361,7 @@ struct MusicMotionArtwork: UIViewRepresentable {
             }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-        func update(url: URL, active: Bool, onFrame: @escaping @MainActor (UIImage) -> Void) {
+        func update(url: URL, active: Bool, onFrame: @escaping @MainActor (CIImage) -> Void) {
             self.onFrame = onFrame
             if self.url != url {
                 stopSampling(); detachOutput()
@@ -371,7 +377,7 @@ struct MusicMotionArtwork: UIViewRepresentable {
                 player.playImmediately(atRate: 1)
                 if displayLink == nil {
                     let link = CADisplayLink(target: self, selector: #selector(sampleFrame(_:)))
-                    link.preferredFramesPerSecond = 12
+                    link.preferredFramesPerSecond = 30
                     link.add(to: .main, forMode: .common)
                     displayLink = link
                 }
@@ -393,7 +399,7 @@ struct MusicMotionArtwork: UIViewRepresentable {
                 }
             }
             guard playerLayer.isReadyForDisplay, let output else { return }
-            let time = output.itemTime(forHostTime: link.timestamp)
+            let time = output.itemTime(forHostTime: link.targetTimestamp)
             guard output.hasNewPixelBuffer(forItemTime: time),
                   let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return }
             autoreleasepool {
@@ -401,8 +407,9 @@ struct MusicMotionArtwork: UIViewRepresentable {
                 guard input.extent.width > 0, input.extent.height > 0 else { return }
                 let scale = min(1, 480 / max(input.extent.width, input.extent.height))
                 let small = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-                guard let cg = frameContext.createCGImage(small, from: small.extent) else { return }
-                onFrame?(UIImage(cgImage: cg))
+                // CIImage retains the decoded buffer; no per-frame CGImage
+                // conversion or CPU readback is needed for the background.
+                onFrame?(small)
             }
         }
 
@@ -432,9 +439,15 @@ struct MusicWarpedArtwork: UIViewRepresentable {
     let active: Bool
 
     final class WarpView: UIView {
-        private let context = CIContext(options: [.cacheIntermediates: false])
+        override class var layerClass: AnyClass { CAMetalLayer.self }
+        private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
+        private let context: CIContext
+        private let commandQueue: MTLCommandQueue?
+        private let frameSlots = DispatchSemaphore(value: 2)
+        private let renderColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         private let renderBounds = CGRect(x: 0, y: 0, width: 480, height: 270)
-        private var sourceImage: UIImage?
+        private var sourceImage: CIImage?
+        private var pendingFrame: MusicBackdropFrame?
         private var sourceID: UUID?
         private var liveSource = false
         private var transitionDuration = 1.2
@@ -442,68 +455,94 @@ struct MusicWarpedArtwork: UIViewRepresentable {
         private var transitionFrom: CIImage?
         private var transitionStart: CFTimeInterval?
         private var displayLink: CADisplayLink?
-        private var phase = 0.0
-        private var previousTime: CFTimeInterval?
+        private var clock = MusicBackdropClock()
 
         override init(frame: CGRect) {
+            let queue = MTLCreateSystemDefaultDevice()?.makeCommandQueue()
+            commandQueue = queue
+            if let queue {
+                context = CIContext(mtlCommandQueue: queue, options: [.cacheIntermediates: false])
+            } else {
+                context = CIContext(options: [.cacheIntermediates: false])
+            }
             super.init(frame: frame)
             isUserInteractionEnabled = false
-            layer.contentsGravity = .resize
             clipsToBounds = true
+            metalLayer.device = queue?.device
+            metalLayer.pixelFormat = .bgra8Unorm
+            metalLayer.framebufferOnly = false
+            metalLayer.drawableSize = renderBounds.size
+            metalLayer.colorspace = renderColorSpace
+            metalLayer.isOpaque = true
+            metalLayer.allowsNextDrawableTimeout = true
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            // Initial paused/static artwork also gets a drawable after layout.
+            if displayLink == nil { render() }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         func update(frame: MusicBackdropFrame, active: Bool) {
-            if sourceImage !== frame.image {
-                let now = CACurrentMediaTime()
-                let sameLiveSource = frame.live && liveSource && sourceID == frame.sourceID
-                // Keep the entry fade running while its video target advances.
-                // Subsequent frames get a short blend instead of restarting a
-                // long cover transition and lagging behind the visible artwork.
-                let enteringVideo = sameLiveSource && transitionDuration > 0.2
-                    && transitionStart.map { now - $0 < transitionDuration } == true
-                if !enteringVideo {
-                    let previous = active ? blendedSource(at: now) : nil
-                    let frozen = previous.flatMap { context.createCGImage($0, from: renderBounds) }
-                    transitionFrom = frozen.map { CIImage(cgImage: $0).clampedToExtent() }
-                    transitionStart = transitionFrom == nil ? nil : now
-                    transitionDuration = sameLiveSource ? 0.12 : (frame.live ? 1.8 : 1.2)
-                }
-                sourceImage = frame.image; sourceID = frame.sourceID; liveSource = frame.live
-                prepare(frame.image)
-                render()
-            }
+            if sourceImage !== frame.image { pendingFrame = frame }
             if active && displayLink == nil {
                 let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
-                link.preferredFramesPerSecond = 30
+                link.preferredFramesPerSecond = 60
                 link.add(to: .main, forMode: .common)
                 displayLink = link
             } else if !active {
                 stop()
+                render()
             }
         }
 
-        private func prepare(_ image: UIImage) {
-            guard let cg = image.cgImage else { blurred = nil; return }
-            let input = CIImage(cgImage: cg)
-            // Orchard uses a 1.32 overscan and a heavily blurred source.
+        private func applyPendingFrame(at time: CFTimeInterval, commandBuffer: MTLCommandBuffer) {
+            guard let frame = pendingFrame, let next = prepare(frame.image, commandBuffer: commandBuffer) else { return }
+            let sameLiveSource = frame.live && liveSource && sourceID == frame.sourceID
+            let enteringVideo = sameLiveSource && transitionDuration > 0.2
+                && transitionStart.map { time - $0 < transitionDuration } == true
+            if !enteringVideo {
+                // Bound the blend history in a small GPU texture rather than
+                // building a growing filter graph or reading pixels to the CPU.
+                transitionFrom = blendedSource(at: time).flatMap { bake($0, commandBuffer: commandBuffer) }
+                transitionStart = transitionFrom == nil ? nil : time
+                transitionDuration = sameLiveSource ? 0.06 : (frame.live ? 1.8 : 1.2)
+            }
+            sourceImage = frame.image; sourceID = frame.sourceID; liveSource = frame.live
+            blurred = next
+            pendingFrame = nil
+        }
+
+        private func prepare(_ input: CIImage, commandBuffer: MTLCommandBuffer) -> CIImage? {
+            guard input.extent.width > 0, input.extent.height > 0 else { return nil }
+            // Preserve the accepted blur, saturation, overscan and warp strength.
             let scale = max(renderBounds.width / input.extent.width, renderBounds.height / input.extent.height) * 1.32
             let scaled = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let centered = scaled.transformed(by: CGAffineTransform(
-                translationX: (renderBounds.width - scaled.extent.width) / 2,
-                y: (renderBounds.height - scaled.extent.height) / 2))
+                translationX: (renderBounds.width - scaled.extent.width) / 2 - scaled.extent.minX,
+                y: (renderBounds.height - scaled.extent.height) / 2 - scaled.extent.minY))
             let softened = centered.clampedToExtent()
                 .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 22])
                 .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.24])
                 .cropped(to: renderBounds)
-            // Bake the blur at the low-resolution sample cadence; distortion runs at 30 fps.
-            blurred = context.createCGImage(softened, from: renderBounds).map { CIImage(cgImage: $0).clampedToExtent() }
+            return bake(softened, commandBuffer: commandBuffer)
+        }
+
+        private func bake(_ input: CIImage, commandBuffer: MTLCommandBuffer) -> CIImage? {
+            guard let device = commandQueue?.device else { return nil }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+                width: Int(renderBounds.width), height: Int(renderBounds.height), mipmapped: false)
+            descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+            descriptor.storageMode = .private
+            guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+            context.render(input, to: texture, commandBuffer: commandBuffer, bounds: renderBounds, colorSpace: renderColorSpace)
+            return CIImage(mtlTexture: texture, options: [.colorSpace: renderColorSpace])?.clampedToExtent()
         }
 
         @objc private func tick(_ link: CADisplayLink) {
-            if let previousTime { phase += min(0.1, link.timestamp - previousTime) * 0.28 * 1.38 }
-            previousTime = link.timestamp
-            render()
+            clock.advance(to: link.targetTimestamp)
+            autoreleasepool { render(at: link.targetTimestamp) }
         }
 
         private func blendedSource(at time: CFTimeInterval) -> CIImage? {
@@ -521,8 +560,17 @@ struct MusicWarpedArtwork: UIViewRepresentable {
             return blend.outputImage ?? blurred
         }
 
-        private func render() {
-            guard let blurred = blendedSource(at: CACurrentMediaTime()) else { return }
+        private func render(at time: CFTimeInterval = CACurrentMediaTime()) {
+            guard window != nil, bounds.width > 0, bounds.height > 0, let commandQueue,
+                  frameSlots.wait(timeout: .now()) == .success else { return }
+            var submitted = false
+            defer { if !submitted { frameSlots.signal() } }
+            guard let drawable = metalLayer.nextDrawable(), let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+            // Coalesce source updates here: only the newest video frame is
+            // prepared, and slow GPU work never queues an unlimited backlog.
+            applyPendingFrame(at: time, commandBuffer: commandBuffer)
+            guard let blurred = blendedSource(at: time) else { return }
+            let phase = clock.phase
             let width = renderBounds.width, height = renderBounds.height
             let twirl = CIFilter.twirlDistortion()
             twirl.inputImage = blurred
@@ -536,18 +584,20 @@ struct MusicWarpedArtwork: UIViewRepresentable {
                                   y: height * (0.5 + 0.34 * sin(phase * 0.73)))
             bump.radius = Float(width * 0.7)
             bump.scale = Float(sin(phase * 0.97) * 0.65 * 0.92)
-            guard let output = bump.outputImage,
-                  let cg = context.createCGImage(output, from: renderBounds) else { return }
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            layer.contents = cg
-            CATransaction.commit()
+            guard let output = bump.outputImage else { return }
+            context.render(output, to: drawable.texture, commandBuffer: commandBuffer,
+                bounds: renderBounds, colorSpace: renderColorSpace)
+            commandBuffer.present(drawable, atTime: time)
+            let slots = frameSlots
+            commandBuffer.addCompletedHandler { _ in slots.signal() }
+            submitted = true
+            commandBuffer.commit()
         }
 
         func stop() {
             displayLink?.invalidate()
             displayLink = nil
-            previousTime = nil
+            clock.pause()
         }
     }
 

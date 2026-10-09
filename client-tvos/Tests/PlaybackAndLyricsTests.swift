@@ -5,6 +5,16 @@ import ImageIO
 @main
 enum PlaybackAndLyricsTests {
     static func main() async throws {
+        var thirtyFPS = MusicBackdropClock(), sixtyFPS = MusicBackdropClock()
+        for tick in 0...30 { thirtyFPS.advance(to: Double(tick) / 30) }
+        for tick in 0...60 { sixtyFPS.advance(to: Double(tick) / 60) }
+        precondition(abs(thirtyFPS.phase - sixtyFPS.phase) < 0.000001)
+        let pausedPhase = sixtyFPS.phase
+        sixtyFPS.pause()
+        sixtyFPS.advance(to: 100)
+        precondition(sixtyFPS.phase == pausedPhase) // Resume never jumps by the pause duration.
+        sixtyFPS.advance(to: .nan)
+        precondition(sixtyFPS.phase == pausedPhase)
         var backdrop = MusicBackdropState()
         let firstCover = backdrop.begin()
         precondition(backdrop.acceptsStill(firstCover))
