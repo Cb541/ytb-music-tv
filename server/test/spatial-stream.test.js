@@ -57,6 +57,10 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
     const playlist = await manifestResponse.text();
     assert.match(playlist, /#EXTM3U/);
     assert.match(playlist, /#EXTINF/);
+    assert.match(playlist, /#EXT-X-PLAYLIST-TYPE:VOD/);
+    assert.match(playlist, /#EXT-X-ENDLIST/);
+    assert.match(playlist, /#EXT-X-MEDIA-SEQUENCE:0/);
+    assert.doesNotMatch(playlist, /#EXT-X-PLAYLIST-TYPE:EVENT/);
 
     const readyResponse = await fetch(base + '/ready', { signal: AbortSignal.timeout(32_000) });
     assert.equal(readyResponse.status, 200);
@@ -88,6 +92,8 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
       assert.equal(response.status, 200, profile + ' did not prepare');
       const manifest = await (await fetch(origin + '/' + profile + '/flat/index.m3u8')).text();
       assert.match(manifest, /#EXT-X-ENDLIST/, profile + ' did not finalize');
+      assert.match(manifest, /#EXT-X-PLAYLIST-TYPE:VOD/, profile + ' must be VOD');
+      assert.match(manifest, /#EXT-X-MEDIA-SEQUENCE:0/);
       const file = manifest.match(/\b\d{5}\.ts\b/)?.[0];
       assert.ok(file, 'Missing ' + profile + ' segment');
       const segment = await fetch(origin + '/' + profile + '/flat/' + file);
@@ -101,6 +107,7 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
     assert.equal(analyzed.status, 200, 'Auto EQ did not prepare');
     const autoManifest = await (await fetch(origin + '/off/auto/index.m3u8')).text();
     assert.match(autoManifest, /#EXT-X-ENDLIST/);
+    assert.match(autoManifest, /#EXT-X-PLAYLIST-TYPE:VOD/);
     const autoSegment = autoManifest.match(/\b\d{5}\.ts\b/)?.[0];
     assert.ok(autoSegment, 'Auto EQ did not produce AAC HLS segments');
     const autoResponse = await fetch(origin + '/off/auto/' + autoSegment);
