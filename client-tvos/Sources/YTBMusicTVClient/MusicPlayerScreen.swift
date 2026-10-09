@@ -222,7 +222,7 @@ struct MusicPlayerScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 20) {
             HStack(spacing: 0) {
-                HStack(spacing: 2) {
+                HStack(spacing: 0) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
                     }
@@ -251,7 +251,7 @@ struct MusicPlayerScreen: View {
                 // reach Lyrics/Queue/Crossfade instead of the seek slider.
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    HStack(spacing: 3) {
+                    HStack(spacing: 1.5) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -281,6 +281,8 @@ struct MusicPlayerScreen: View {
                     .accessibilityLabel("Audio effects and crossfade")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
+                    // Keep the Crossfade button at its previous position while
+                    // reducing the gaps between the two controls to its left.
                     .padding(.trailing, -55)
                     .offset(y: 31)
                 }
