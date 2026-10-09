@@ -320,13 +320,13 @@ struct ActivePlaybackPanel: View {
 
     private var variantLabel: String? {
         guard let value = state.audioVariant else { return nil }
-        switch value {
-        case .dolbyAtmos: return "Dolby Atmos"
-        case .dolbyAudio: return "Dolby Audio"
-        case .lossless: return "Lossless"
-        case .highResolutionLossless: return "Hi-Res Lossless"
-        @unknown default: return String(describing: value)
-        }
+        if value == .dolbyAtmos { return "Dolby Atmos" }
+        if value == .dolbyAudio { return "Dolby Audio" }
+        if value == .lossless { return "Lossless" }
+        if value == .highResolutionLossless { return "Hi-Res Lossless" }
+        if value == .lossyStereo { return "Stereo (lossy)" }
+        // Keep future spatial formats distinct from verified Dolby Atmos.
+        return String(describing: value)
     }
 
     private var isPlaying: Bool {
