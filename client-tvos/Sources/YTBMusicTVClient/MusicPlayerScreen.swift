@@ -14,7 +14,7 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.musicLyricsVisible") private var lyricsVisible = false
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
-    @AppStorage("YTBMusicTV.spatialAudioEnabled") private var spatialAudioEnabled = false
+    @AppStorage("YTBMusicTV.spatialAudioProfile") private var spatialAudioProfile = "off"
     @State private var showingQueue = false
     @FocusState private var queueCloseFocused: Bool
     @FocusState private var focusedQueueID: String?
@@ -153,7 +153,7 @@ struct MusicPlayerScreen: View {
         .onChange(of: scenePhase) { if scenePhase == .active { noteControlActivity() } }
         .simultaneousGesture(TapGesture().onEnded(noteControlActivity))
         .onChange(of: crossfadeSeconds) { noteControlActivity() }
-        .onChange(of: spatialAudioEnabled) { viewModel.setSpatialAudioEnabled(spatialAudioEnabled); noteControlActivity() }
+        .onChange(of: spatialAudioProfile) { viewModel.setSpatialAudioProfile(spatialAudioProfile); noteControlActivity() }
         .onMoveCommand { _ in noteControlActivity() }
         .task(id: controlActivityRevision) {
             do { try await Task.sleep(for: .seconds(2)) }
@@ -255,16 +255,13 @@ struct MusicPlayerScreen: View {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
-                        Button {
-                            spatialAudioEnabled.toggle()
-                            viewModel.setSpatialAudioEnabled(spatialAudioEnabled)
-                            noteControlActivity()
-                        } label: {
-                            Label(spatialAudioEnabled ? "Spatial Audio: On" : "Spatial Audio: Off",
-                                  systemImage: spatialAudioEnabled ? "checkmark.circle.fill" : "circle")
+                        Picker("Spatial Audio", selection: $spatialAudioProfile) {
+                            Text("Off — Original Audio").tag("off")
+                            Text("Balanced — Gentle Width").tag("balanced")
+                            Text("Immersive — Wider Sound").tag("immersive")
+                            Text("Maximum — Strongest Width").tag("maximum")
                         }
-                        .accessibilityLabel("Spatial Audio")
-                        .accessibilityValue(spatialAudioEnabled ? "On" : "Off")
+                        .accessibilityLabel("Spatial Audio profile")
                         Picker("Crossfade", selection: $crossfadeSeconds) {
                             Text("Off").tag(0.0)
                             ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
