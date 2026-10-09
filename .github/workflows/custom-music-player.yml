@@ -20,6 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Verify all three profile-specific HLS streams before packaging the client.
   spatial-stream-test:
     runs-on: ubuntu-latest
     steps:
