@@ -38,12 +38,16 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
 
   const mediaServer = createServer(async (req, res) => {
     await serveSpatialStream({
-      req, res, videoId: 'testMusic01', filename: req.url.split('/').at(-1), youtubeService: musicService,
+      req, res, videoId: 'testMusic01',
+      profile: req.url.split('/')[1] || 'balanced',
+      filename: req.url.split('/').at(-1),
+      youtubeService: musicService,
     });
   });
   mediaServer.listen(0, '127.0.0.1');
   await once(mediaServer, 'listening');
-  const base = 'http://127.0.0.1:' + mediaServer.address().port;
+  const origin = 'http://127.0.0.1:' + mediaServer.address().port;
+  const base = origin + '/balanced';
 
   try {
     const manifestResponse = await fetch(base + '/index.m3u8');
@@ -74,6 +78,21 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
     assert.match(probe.stdout, /codec_name=aac/);
     assert.match(probe.stdout, /channels=2/);
     assert.match(probe.stdout, /sample_rate=48000/);
+    // Verify all three distinct profiles are independently generated and
+    // do not collide in the encoder/segment cache.
+    for (const profile of ['immersive', 'maximum']) {
+      const response = await fetch(origin + '/' + profile + '/ready', {
+        signal: AbortSignal.timeout(32_000),
+      });
+      assert.equal(response.status, 200, profile + ' did not prepare');
+      const manifest = await (await fetch(origin + '/' + profile + '/index.m3u8')).text();
+      assert.match(manifest, /#EXT-X-ENDLIST/, profile + ' did not finalize');
+      const file = manifest.match(/\\b\\d{5}\\.ts\\b/)?.[0];
+      assert.ok(file, 'Missing ' + profile + ' segment');
+      const segment = await fetch(origin + '/' + profile + '/' + file);
+      assert.equal(segment.status, 200);
+      assert.ok((await segment.arrayBuffer()).byteLength > 1000);
+    }
   } finally {
     sourceServer.close();
     mediaServer.close();
