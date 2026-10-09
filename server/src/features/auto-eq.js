@@ -63,7 +63,7 @@ export function autoEQFilter(gains) {
     'equalizer=f=110:t=q:w=0.8:g=' + safe(gains.low),
     'equalizer=f=1800:t=q:w=0.9:g=' + safe(gains.mid),
     'equalizer=f=8000:t=q:w=0.8:g=' + safe(gains.high),
-    // Leave output headroom for simultaneous widening and EQ boosts.
-    'volume=0.82',
+    // Final chain applies a transparent peak limiter: don't permanently
+    // attenuate every Auto EQ track by 18%.
   ].join(',');
 }
