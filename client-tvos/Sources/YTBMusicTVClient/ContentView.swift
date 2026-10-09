@@ -1853,11 +1853,6 @@ private struct ProgressStrip: View {
                         .frame(width: proxy.size.width * displayedProgress)
                         .animation(scrubbing ? nil : .linear(duration: 0.95), value: currentMs)
 
-                    Circle()
-                        .fill(.white)
-                        .frame(width: knobSize, height: knobSize)
-                        .offset(x: max(0, proxy.size.width * displayedProgress - knobSize / 2))
-                        .opacity(durationMs > 0 ? 1 : 0)
                 }
             }
             .frame(height: trackHeight)
