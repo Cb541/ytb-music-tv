@@ -2,6 +2,8 @@ import AVFoundation
 import AudioToolbox
 import CoreMedia
 import MediaToolbox
+import ObjectiveC
+import Synchronization
 
 // Real-time mid/side width adjustment for decoded AVPlayer audio.
 // On tvOS 27, the special track-mix audio tap works for remote/HLS streams,
@@ -10,7 +12,13 @@ import MediaToolbox
 // Keep center information intact relative to both channels. Apply only a
 // modest side gain and fixed headroom; no reverb, Haas delay, EQ, or phase shift.
 // The effect works on existing stereo content (mono content remains mono).
-private final class StereoWidthTapState {
+private final class StereoWidthTapState: NSObject {
+    private let effectEnabled = Atomic<Bool>(false)
+
+    func setEnabled(_ value: Bool) {
+        effectEnabled.store(value, ordering: .relaxed)
+    }
+
     let sideGain: Float
     private let headroom: Float = 0.87
 
@@ -38,6 +46,7 @@ private final class StereoWidthTapState {
     }
 
     func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
+        guard effectEnabled.load(ordering: .relaxed) else { return }
         guard frames > 0, format.mChannelsPerFrame == 2,
               format.mFormatID == kAudioFormatLinearPCM else { return }
         let flags = format.mFormatFlags
@@ -98,18 +107,36 @@ private final class StereoWidthTapState {
     }
 }
 
+@MainActor
 enum MusicStereoWidening {
+    private static var stateKey: UInt8 = 0
+
+    static func isInstalled(on item: AVPlayerItem) -> Bool {
+        objc_getAssociatedObject(item, &stateKey) != nil
+    }
+
+    // Never replace item.audioMix on the playing item. Set the atomic state
+    // of the existing tap so Siri Remote toggles cannot stall streaming.
+    static func setEnabled(_ enabled: Bool, on item: AVPlayerItem) {
+        (objc_getAssociatedObject(item, &stateKey) as? StereoWidthTapState)?.setEnabled(enabled)
+    }
+
     /// Install a DSP tap directly in the existing AVPlayerItem audio pipeline.
     /// False means no effect was installed; ordinary audio stays available.
     @discardableResult
-    static func install(on item: AVPlayerItem, strength: Double) -> Bool {
+    static func install(on item: AVPlayerItem, strength: Double, enabled: Bool) -> Bool {
+        if isInstalled(on: item) {
+            setEnabled(enabled, on: item)
+            return true
+        }
         guard #available(tvOS 27.0, *) else { return false }
-        return installWithTrackMix(on: item, strength: strength)
+        return installWithTrackMix(on: item, strength: strength, enabled: enabled)
     }
 
     @available(tvOS 27.0, *)
-    private static func installWithTrackMix(on item: AVPlayerItem, strength: Double) -> Bool {
+    private static func installWithTrackMix(on item: AVPlayerItem, strength: Double, enabled: Bool) -> Bool {
         let state = StereoWidthTapState(strength: strength)
+        state.setEnabled(enabled)
         let pointer = Unmanaged.passRetained(state).toOpaque()
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
@@ -183,10 +210,13 @@ enum MusicStereoWidening {
         let mix = AVMutableAudioMix()
         mix.inputParameters = [parameters]
         item.audioMix = mix
+        objc_setAssociatedObject(item, &stateKey, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return true
     }
 
+    // Only call for items not yet inserted into a player (fallback path).
     static func disable(on item: AVPlayerItem) {
         item.audioMix = nil
+        setEnabled(false, on: item)
     }
 }
