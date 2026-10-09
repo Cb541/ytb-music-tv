@@ -14,6 +14,7 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.musicLyricsVisible") private var lyricsVisible = false
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
+    @AppStorage("YTBMusicTV.spatialAudioEnabled") private var spatialAudioEnabled = false
     @State private var showingQueue = false
     @FocusState private var queueCloseFocused: Bool
     @FocusState private var focusedQueueID: String?
@@ -135,7 +136,7 @@ struct MusicPlayerScreen: View {
                 await viewModel?.albumCoverURL(for: media)
             }
         }
-        .onAppear { focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
+        .onAppear { viewModel.setSpatialAudioEnabled(spatialAudioEnabled); focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
         .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }
         .onChange(of: scrubbing) { noteControlActivity() }
         .onChange(of: showingQueue) { noteControlActivity() }
@@ -145,6 +146,7 @@ struct MusicPlayerScreen: View {
         .onChange(of: scenePhase) { if scenePhase == .active { noteControlActivity() } }
         .simultaneousGesture(TapGesture().onEnded(noteControlActivity))
         .onChange(of: crossfadeSeconds) { noteControlActivity() }
+        .onChange(of: spatialAudioEnabled) { viewModel.setSpatialAudioEnabled(spatialAudioEnabled); noteControlActivity() }
         .onMoveCommand { _ in noteControlActivity() }
         .task(id: controlActivityRevision) {
             do { try await Task.sleep(for: .seconds(2)) }
@@ -212,7 +214,7 @@ struct MusicPlayerScreen: View {
 
     private var playbackControls: some View {
         VStack(spacing: 20) {
-            HStack(spacing: 24) {
+            HStack(spacing: 0) {
                 HStack(spacing: 2) {
                     control("shuffle", label: "Shuffle", selected: viewModel.state?.shuffle == true, boxless: true) {
                         Task { await viewModel.toggleShuffle() }
@@ -226,7 +228,6 @@ struct MusicPlayerScreen: View {
                         highlighted: controlHighlightVisible && focusedControl == "PlayPause", isVisible: controlsVisible, showsBackground: false, horizontalPadding: 4))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
-                    .onMoveCommand { moveControl(from: "PlayPause", direction: $0) }
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                     .disabled(scrubbing)
                     control("forward.end.fill", label: "Next", boxless: true) { Task { await viewModel.next() } }
@@ -237,13 +238,25 @@ struct MusicPlayerScreen: View {
                 .padding(.leading, -43)
                 .offset(y: 11)
                 .focusSection()
-                Spacer()
-                // The trailing Crossfade menu anchors this row. Compact the
-                // preceding buttons toward it without changing that anchor.
+                // Bridge the gap with a right-side focus section that extends
+                // leftward to the transport controls. Siri Remote swipes then
+                // reach Lyrics/Queue/Crossfade instead of the seek slider.
                 HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 0) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
+                        Button {
+                            spatialAudioEnabled.toggle()
+                            viewModel.setSpatialAudioEnabled(spatialAudioEnabled)
+                            noteControlActivity()
+                        } label: {
+                            Label(spatialAudioEnabled ? "Spatial Audio: On" : "Spatial Audio: Off",
+                                  systemImage: spatialAudioEnabled ? "checkmark.circle.fill" : "circle")
+                        }
+                        .accessibilityLabel("Spatial Audio")
+                        .accessibilityValue(spatialAudioEnabled ? "On" : "Off")
                         Picker("Crossfade", selection: $crossfadeSeconds) {
                             Text("Off").tag(0.0)
                             ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
@@ -259,15 +272,14 @@ struct MusicPlayerScreen: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .scaleEffect(0.88)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
-                    .onMoveCommand { moveControl(from: "Crossfade", direction: $0) }
-                    .accessibilityLabel("Crossfade duration")
+                    .accessibilityLabel("Audio effects and crossfade")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
-                .padding(.trailing, -25)
-                .offset(y: 31)
+                    .padding(.trailing, -25)
+                    .offset(y: 31)
+                }
                 .focusSection()
             }
-            .focusSection()
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
                                 onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false, visualsVisible: controlsVisible)
                 .padding(.horizontal, -60)
@@ -292,23 +304,9 @@ struct MusicPlayerScreen: View {
             backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 0 : 4))
         .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
-        .onMoveCommand { moveControl(from: label, direction: $0) }
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
-    }
-
-    private func moveControl(from source: String, direction: MoveCommandDirection) {
-        noteControlActivity()
-        guard !scrubbing, !showingQueue else { return }
-        let order = ["Shuffle", "Previous", "PlayPause", "Next", "Repeat song", "Lyrics", "Queue", "Crossfade"]
-        guard let index = order.firstIndex(of: source) else { return }
-        // Use the originating button, never focus already changed by tvOS.
-        switch direction {
-        case .left where index > 0: focusedControl = order[index - 1]
-        case .right where index + 1 < order.count: focusedControl = order[index + 1]
-        default: break
-        }
     }
 
     private func openRelated(_ kind: String) {
