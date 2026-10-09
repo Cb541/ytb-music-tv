@@ -1,5 +1,6 @@
 import { isBlockedUrl, proxyUrl } from '../features/adblock.js';
 import { publicStreamUrl, streamResolvedMedia } from '../features/stream.js';
+import { serveSpatialStream } from '../features/spatial-stream.js';
 import { clientForRequest, issueClientToken } from './security.js';
 import {
   json,
@@ -284,6 +285,15 @@ export const createApiRouter = ({
       } catch (error) {
         return streamResolveFailure(res, error);
       }
+    }
+
+    // HLS AAC rendered by FFmpeg, without modifying AVPlayerItem.audioMix.
+    // Segments are temporary and remain separate from normal playback.
+    const spatialMatch = pathname.match(/^\/api\/spatial\/([A-Za-z0-9_-]{11})\/(index\.m3u8|ready|[0-9]{5}\.ts)$/);
+    if (spatialMatch) {
+      return await serveSpatialStream({
+        req, res, videoId: spatialMatch[1], filename: spatialMatch[2], youtubeService,
+      });
     }
 
     const streamMatch = pathname.match(/^\/api\/stream\/([^/]+)$/);
