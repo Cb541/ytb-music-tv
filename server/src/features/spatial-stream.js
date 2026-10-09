@@ -62,6 +62,7 @@ async function initialize(videoId, youtubeService) {
     completed: false,
     failed: null,
     done: null,
+    finalManifest: null,
   };
   // FFmpeg receives the signed input URL as an argv entry; never include its
   // potentially sensitive query parameters in the client response or log.
@@ -115,6 +116,7 @@ async function getJob(videoId, youtubeService) {
 }
 
 const awaitManifest = async (job, { complete = false } = {}) => {
+  if (job.finalManifest) return job.finalManifest;
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (job.failed) throw job.failed;
@@ -125,6 +127,9 @@ const awaitManifest = async (job, { complete = false } = {}) => {
     try {
       const body = await readFile(job.manifest);
       if (body.includes(Buffer.from('#EXTINF:')) && (!complete || body.includes(Buffer.from('#EXT-X-ENDLIST')))) {
+        if (job.completed && body.includes(Buffer.from('#EXT-X-ENDLIST'))) {
+          job.finalManifest = body;
+        }
         return body;
       }
     } catch (error) {
