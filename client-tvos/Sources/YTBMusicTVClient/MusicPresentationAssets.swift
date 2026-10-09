@@ -482,6 +482,11 @@ struct MusicWarpedArtwork: UIViewRepresentable {
             // Initial paused/static artwork also gets a drawable after layout.
             if displayLink == nil { render() }
         }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { render() }
+        }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
         func update(frame: MusicBackdropFrame, active: Bool) {
