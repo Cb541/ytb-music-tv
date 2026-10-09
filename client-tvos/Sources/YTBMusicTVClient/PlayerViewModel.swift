@@ -71,6 +71,7 @@ final class PlayerViewModel: ObservableObject {
     private var spatialAudioEnabled: Bool { spatialAudioProfile != "off" || autoEQEnabled }
     private var spatialAudioRequested = false
     private var spatialPlaybackActive = false
+    @Published private(set) var audioEffectsPlaybackStatus = "Original audio"
     private var spatialOriginalURL: URL?
     private var spatialOriginalHasVideo = false
     private var spatialSwitchGeneration = UUID()
@@ -123,6 +124,7 @@ final class PlayerViewModel: ObservableObject {
         spatialSwitchGeneration = UUID()
         let generation = spatialSwitchGeneration
         spatialWatchdog?.cancel()
+        audioEffectsPlaybackStatus = enabled ? "Preparing enhanced audio…" : "Original audio"
 
         guard state?.status == "playing", let media = state?.currentMedia else { return }
         if !enabled {
@@ -155,6 +157,7 @@ final class PlayerViewModel: ObservableObject {
                 guard self.spatialOriginalURL != nil else { return }
                 self.spatialOriginalHasVideo = self.currentStreamHasVideo
                 self.spatialPlaybackActive = true
+                self.audioEffectsPlaybackStatus = "Preparing enhanced audio…"
                 self.currentStreamHasVideo = false
                 self.currentAudioBitrate = 256_000
                 self.fallbackPlaybackURLs = [self.spatialOriginalURL!]
@@ -173,6 +176,7 @@ final class PlayerViewModel: ObservableObject {
                 self.autoEQEnabled = false
                 UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
                 UserDefaults.standard.set(false, forKey: "YTBMusicTV.autoEQEnabled")
+                self.audioEffectsPlaybackStatus = "Original audio — processing unavailable"
                 self.errorMessage = "The enhanced audio stream is unavailable. Normal music playback continues."
             }
         }
@@ -199,6 +203,7 @@ final class PlayerViewModel: ObservableObject {
             guard originalPlayer.currentItem === originalItem else { return }
             await originalPlayer.seek(to: resume)
         }
+        audioEffectsPlaybackStatus = "Original audio — processed stream failed"
         errorMessage = "The processed stream was unavailable. Normal audio has been restored."
         return true
     }
@@ -1002,6 +1007,7 @@ final class PlayerViewModel: ObservableObject {
             spatialOriginalHasVideo = resolved.hasVideo
             let processedURL = spatialAudioEnabled ? spatialStreamURL(for: resolved.media) : nil
             spatialPlaybackActive = processedURL != nil
+            audioEffectsPlaybackStatus = spatialPlaybackActive ? "Preparing enhanced audio…" : "Original audio"
             currentStreamHasVideo = spatialPlaybackActive ? false : resolved.hasVideo
             currentAudioBitrate = spatialPlaybackActive ? 256_000
                 : (resolved.adaptiveAudioURL != nil && preparedItem == nil ? nil : resolved.audioBitrate)
@@ -1190,6 +1196,21 @@ final class PlayerViewModel: ObservableObject {
                 switch player.timeControlStatus {
                 case .playing:
                     self.isPreparingPlayback = false
+                    let processedURL = (player.currentItem?.asset as? AVURLAsset)?.url
+                    let confirmedEnhancedStream = self.spatialPlaybackActive
+                        && processedURL?.path.contains("/api/spatial/") == true
+                    if confirmedEnhancedStream {
+                        let profile = self.spatialAudioProfile == "off"
+                            ? "Auto EQ" : self.spatialAudioProfile.capitalized
+                        let suffix = self.autoEQEnabled && self.spatialAudioProfile != "off"
+                            ? " + Auto EQ" : ""
+                        self.audioEffectsPlaybackStatus = "Active: \(profile)\(suffix)"
+                    } else if self.spatialPlaybackActive {
+                        self.audioEffectsPlaybackStatus = "Original audio — enhanced stream unavailable"
+                    } else if !self.audioEffectsPlaybackStatus.contains("failed")
+                                && !self.audioEffectsPlaybackStatus.contains("unavailable") {
+                        self.audioEffectsPlaybackStatus = "Original audio"
+                    }
                 case .waitingToPlayAtSpecifiedRate:
                     self.isPreparingPlayback = self.state?.status == "playing"
                 case .paused:
@@ -1318,6 +1339,7 @@ final class PlayerViewModel: ObservableObject {
             autoEQEnabled = false
             spatialPlaybackActive = false
             spatialSwitchGeneration = UUID()
+            audioEffectsPlaybackStatus = "Original audio — fallback"
             UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
             UserDefaults.standard.set(false, forKey: "YTBMusicTV.autoEQEnabled")
             currentStreamHasVideo = spatialOriginalHasVideo
@@ -1843,13 +1865,14 @@ final class PlayerViewModel: ObservableObject {
               cache.requestID == playbackRequestID,
               cache.mediaID == media.id
         else { return nil }
-        // AVPlayerItems are owned by their deck. A manual skip gets a fresh item,
-        // even when AVFoundation is still releasing the standby deck's item.
-        let freshItem = cache.item.map { AVPlayerItem(asset: $0.asset) }
+        // A prefetched HLS item (and even its AVURLAsset) can carry a live-edge
+        // position from the silent standby deck. Manual Next must NEVER reuse
+        // that item's timeline. Reuse only the pre-resolved URL/metadata, then
+        // create a completely fresh AVPlayerItem from its VOD URL at time zero.
         standbyPlayer?.pause()
         standbyPlayer?.replaceCurrentItem(with: nil)
         standbyPlayer = nil
-        return PrefetchedPlaybackMedia(resolved: cache.resolved, item: freshItem)
+        return PrefetchedPlaybackMedia(resolved: cache.resolved, item: nil)
     }
 
     private func nextQueueItem(
