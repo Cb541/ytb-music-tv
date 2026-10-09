@@ -926,7 +926,9 @@ final class PlayerViewModel: ObservableObject {
             let preparedItem: AVPlayerItem?
             if let prefetchedItem {
                 preparedItem = prefetchedItem
-            } else if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
+            } else if !spatialAudioEnabled,
+                      let videoURL = resolved.adaptiveVideoURL,
+                      let audioURL = resolved.adaptiveAudioURL {
                 preparedItem = try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
             } else {
                 preparedItem = nil
@@ -948,8 +950,14 @@ final class PlayerViewModel: ObservableObject {
 
             playbackTimeMs = 0
             playbackDurationMs = max(0, resolved.media.durationMs)
-            currentStreamHasVideo = resolved.hasVideo
-            currentAudioBitrate = resolved.adaptiveAudioURL != nil && preparedItem == nil ? nil : resolved.audioBitrate
+            spatialSwitchGeneration = UUID()
+            spatialOriginalURL = resolved.url
+            spatialOriginalHasVideo = resolved.hasVideo
+            let processedURL = spatialAudioEnabled ? spatialStreamURL(for: resolved.media) : nil
+            spatialPlaybackActive = processedURL != nil
+            currentStreamHasVideo = spatialPlaybackActive ? false : resolved.hasVideo
+            currentAudioBitrate = spatialPlaybackActive ? 256_000
+                : (resolved.adaptiveAudioURL != nil && preparedItem == nil ? nil : resolved.audioBitrate)
             state = PlayerState(
                 status: "playing",
                 currentTimeMs: 0,
@@ -961,7 +969,12 @@ final class PlayerViewModel: ObservableObject {
             )
             pendingMedia = nil
 
-            if let preparedItem {
+            if let processedURL {
+                configurePlayer(
+                    url: processedURL,
+                    fallbackURLs: [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
+                )
+            } else if let preparedItem {
                 let adaptiveFallbacks = resolved.adaptiveVideoURL != nil
                     ? [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
                     : resolved.fallbackURL.map { [$0] } ?? []
@@ -1689,14 +1702,23 @@ final class PlayerViewModel: ObservableObject {
         let incomingTime = CMTimeGetSeconds(incoming.currentTime())
         playbackTimeMs = incomingTime.isFinite ? max(0, Int(incomingTime * 1000)) : 0
         playbackDurationMs = resolved.media.durationMs
-        currentStreamHasVideo = resolved.hasVideo
-        currentAudioBitrate = resolved.audioBitrate
+        spatialOriginalURL = resolved.url
+        spatialOriginalHasVideo = resolved.hasVideo
+        spatialPlaybackActive = spatialAudioEnabled && spatialStreamURL(for: resolved.media) != nil
+        currentStreamHasVideo = spatialPlaybackActive ? false : resolved.hasVideo
+        currentAudioBitrate = spatialPlaybackActive ? 256_000 : resolved.audioBitrate
         state = PlayerState(status: "playing", currentTimeMs: playbackTimeMs,
             currentMediaId: resolved.media.id, currentMedia: resolved.media, queue: queue,
             shuffle: oldState?.shuffle ?? false, repeatMode: oldState?.repeatMode ?? "off")
-        fallbackPlaybackURLs = resolved.fallbackURL.map { [$0] } ?? []
+        fallbackPlaybackURLs = spatialPlaybackActive
+            ? [resolved.url] + (resolved.fallbackURL.map { [$0] } ?? [])
+            : resolved.fallbackURL.map { [$0] } ?? []
         audioFallbackAttempted = false
-        if let item = incoming.currentItem { installStatusObserver(for: item); installEndObserver(for: item) }
+        if let item = incoming.currentItem {
+            installStatusObserver(for: item)
+            installEndObserver(for: item)
+            monitorSpatialPlayback(for: item)
+        }
         observeTimeControlStatus()
         installTimeObserverIfNeeded()
         updateNowPlayingInfo()
@@ -1714,6 +1736,9 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func preparePlayerItem(for resolved: ResolvedPlaybackMedia) async -> AVPlayerItem? {
+        if spatialAudioEnabled, let processedURL = spatialStreamURL(for: resolved.media) {
+            return AVPlayerItem(url: processedURL)
+        }
         if let videoURL = resolved.adaptiveVideoURL, let audioURL = resolved.adaptiveAudioURL {
             return try? await makeAdaptivePlayerItem(videoURL: videoURL, audioURL: audioURL)
         }
