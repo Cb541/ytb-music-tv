@@ -11,14 +11,16 @@ const IDLE_MS = 45 * 60 * 1000;
 const START_TIMEOUT_MS = 30_000;
 const FFMPEG = process.env.YTB_MUSIC_TV_FFMPEG || 'ffmpeg';
 
-// A fixed family of center-preserving mid/side width profiles.
-// Loudness decreases slightly as width rises, to limit peak clipping.
+// Center-preserving stereo widening without a constant volume penalty.
+// The limiter protects the output when a wider mix (or Auto EQ boost) would
+// otherwise exceed full scale, rather than making every track quieter.
 const STEREO_FILTERS = Object.freeze({
   off: 'aformat=channel_layouts=stereo',
-  balanced: 'aformat=channel_layouts=stereo,stereotools=slev=1.30:mlev=1:level_out=0.88',
-  immersive: 'aformat=channel_layouts=stereo,stereotools=slev=1.65:mlev=1:level_out=0.79',
-  maximum: 'aformat=channel_layouts=stereo,stereotools=slev=2.00:mlev=1:level_out=0.68',
+  balanced: 'aformat=channel_layouts=stereo,stereotools=slev=1.30:mlev=1',
+  immersive: 'aformat=channel_layouts=stereo,stereotools=slev=1.65:mlev=1',
+  maximum: 'aformat=channel_layouts=stereo,stereotools=slev=2.00:mlev=1',
 });
+const PEAK_PROTECTION = 'alimiter=limit=0.95:level=0';
 export const spatialProfiles = Object.freeze(Object.keys(STEREO_FILTERS));
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,7 +51,7 @@ async function initialize(videoId, profile, autoEQ, youtubeService) {
   }
 
   const gains = autoEQ ? await analyzeAutoEQ(videoId, source) : null;
-  const filter = gains ? STEREO_FILTERS[profile] + ',' + autoEQFilter(gains) : STEREO_FILTERS[profile];
+  const filter = [STEREO_FILTERS[profile], ...(gains ? [autoEQFilter(gains)] : []), PEAK_PROTECTION].join(',');
   const directory = await mkdtemp(join(tmpdir(), 'ytb-spatial-'));
   const manifest = join(directory, 'index.m3u8');
   const args = [
@@ -60,7 +62,7 @@ async function initialize(videoId, profile, autoEQ, youtubeService) {
     '-af', filter,
     '-ar', '48000', '-ac', '2', '-c:a', 'aac', '-b:a', '256k',
     '-f', 'hls', '-hls_time', '3', '-hls_list_size', '0',
-    '-hls_playlist_type', 'event', '-hls_flags', 'independent_segments+temp_file',
+    '-hls_playlist_type', 'vod', '-hls_flags', 'independent_segments+temp_file',
     '-hls_segment_filename', join(directory, '%05d.ts'),
     manifest,
   ];
@@ -189,7 +191,9 @@ export const serveSpatialStream = async ({ req, res, videoId, profile = 'balance
       return;
     }
     if (filename === 'index.m3u8') {
-      const manifest = await awaitManifest(job);
+      // Never give AVPlayer a partial/live-edge playlist. A finalized VOD
+      // timeline begins at 0:00 and supports deterministic manual Next/seek.
+      const manifest = await awaitManifest(job, { complete: true });
       res.writeHead(200, {
         ...headers,
         'content-type': 'application/vnd.apple.mpegurl',
