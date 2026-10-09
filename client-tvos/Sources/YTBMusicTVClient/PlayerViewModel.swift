@@ -169,7 +169,7 @@ final class PlayerViewModel: ObservableObject {
         spatialWatchdog?.cancel()
         guard spatialPlaybackActive else { return }
         spatialWatchdog = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(14))
+            try? await Task.sleep(for: .seconds(32))
             guard !Task.isCancelled, let self,
                   self.player.currentItem === item,
                   self.state?.status == "playing",
@@ -1266,6 +1266,13 @@ final class PlayerViewModel: ObservableObject {
 
     private func retryFallbackPlayback(failedItem: AVPlayerItem) -> Bool {
         guard player.currentItem === failedItem, !fallbackPlaybackURLs.isEmpty else { return false }
+        if spatialPlaybackActive {
+            spatialAudioEnabled = false
+            spatialPlaybackActive = false
+            spatialSwitchGeneration = UUID()
+            UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+            currentStreamHasVideo = spatialOriginalHasVideo
+        }
         let fallbackPlaybackURL = fallbackPlaybackURLs.removeFirst()
         currentAudioBitrate = nil
         isPreparingPlayback = true
