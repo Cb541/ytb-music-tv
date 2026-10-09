@@ -1541,6 +1541,14 @@ struct PlayerProgressStrip: View {
     var showsBackground = true
     var visualsVisible = true
 
+    // The music screen keeps the seek bar out of tvOS's directional focus
+    // graph until a Down command from one of the transport controls.
+    // Other player screens retain the original, always-focusable behavior.
+    var acceptsFocus = true
+    var focusRequestRevision = 0
+    var onMoveUp: (() -> Void)? = nil
+    var onFocusLost: (() -> Void)? = nil
+
     var body: some View {
         ProgressStrip(
             currentMs: progress.currentMs,
@@ -1551,7 +1559,11 @@ struct PlayerProgressStrip: View {
             seek: seek,
             accentColor: accentColor,
             showsBackground: showsBackground,
-            visualsVisible: visualsVisible
+            visualsVisible: visualsVisible,
+            acceptsFocus: acceptsFocus,
+            focusRequestRevision: focusRequestRevision,
+            onMoveUp: onMoveUp,
+            onFocusLost: onFocusLost
         )
     }
 }
@@ -1722,6 +1734,10 @@ private struct ProgressStrip: View {
     var accentColor: Color = .red
     var showsBackground = true
     var visualsVisible = true
+    var acceptsFocus = true
+    var focusRequestRevision = 0
+    var onMoveUp: (() -> Void)? = nil
+    var onFocusLost: (() -> Void)? = nil
 
     @State private var scrubMs = 0
     @State private var scrubRunDirection: ScrubDirection?
@@ -1736,13 +1752,31 @@ private struct ProgressStrip: View {
         progressControl
             .buttonStyle(RemoteButtonStyle())
             .focusEffectDisabled()
-            .disabled(durationMs <= 0)
+            .disabled(durationMs <= 0 || !acceptsFocus)
             .focused($focused)
-            .onMoveCommand { direction in onActivity(); handleScrubMove(direction) }
+            .onMoveCommand { direction in
+                onActivity()
+                if direction == .up && !scrubbing, let onMoveUp {
+                    focused = false
+                    onMoveUp()
+                } else {
+                    handleScrubMove(direction)
+                }
+            }
+            .onChange(of: focusRequestRevision) {
+                guard focusRequestRevision > 0, acceptsFocus, durationMs > 0 else { return }
+                // Let the enabled Button enter SwiftUI's focus tree before
+                // assigning focus. This avoids tvOS reverting to the seek bar.
+                Task { @MainActor in
+                    await Task.yield()
+                    focused = true
+                }
+            }
             .onChange(of: focused) {
                 if focused { onActivity() }
-                if !focused && !scrubbing {
-                    stopScrubHold()
+                if !focused {
+                    if !scrubbing { stopScrubHold() }
+                    onFocusLost?()
                 }
             }
             .onChange(of: currentMs) {
