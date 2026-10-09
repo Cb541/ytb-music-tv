@@ -66,6 +66,22 @@ final class PlayerViewModel: ObservableObject {
             ? 5.0 : defaults.double(forKey: "YTBMusicTV.crossfadeSeconds")
         return min(12, max(0, value))
     }
+    private var spatialAudioEnabled = UserDefaults.standard.bool(forKey: "YTBMusicTV.spatialAudioEnabled")
+
+    /// Enable the system spatializer for mono/stereo music, if the output route supports it.
+    /// Apply immediately to both decks so Crossfade cannot temporarily change the sound.
+    func setSpatialAudioEnabled(_ enabled: Bool) {
+        spatialAudioEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "YTBMusicTV.spatialAudioEnabled")
+        if let item = player.currentItem { configureSpatialAudio(for: item) }
+        if let item = standbyPlayer?.currentItem { configureSpatialAudio(for: item) }
+        if let item = fadingOutPlayer?.currentItem { configureSpatialAudio(for: item) }
+    }
+
+    private func configureSpatialAudio(for item: AVPlayerItem) {
+        item.allowedAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
+    }
+
     let playbackProgress = PlaybackProgress()
 
     private var client: APIClient?
@@ -997,6 +1013,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func replacePlayerItem(item: AVPlayerItem) {
+        configureSpatialAudio(for: item)
         cancelCrossfade()
         removePlaybackTimeObserver()
         player.pause()
@@ -1477,6 +1494,7 @@ final class PlayerViewModel: ObservableObject {
                     item: item
                 )
                 if let item {
+                    self.configureSpatialAudio(for: item)
                     let prepared = AVPlayer(playerItem: item)
                     prepared.volume = 0
                     prepared.automaticallyWaitsToMinimizeStalling = true
@@ -1651,6 +1669,7 @@ final class PlayerViewModel: ObservableObject {
         // AVPlayerItems are owned by their deck. A manual skip gets a fresh item,
         // even when AVFoundation is still releasing the standby deck's item.
         let freshItem = cache.item.map { AVPlayerItem(asset: $0.asset) }
+        if let freshItem { configureSpatialAudio(for: freshItem) }
         standbyPlayer?.pause()
         standbyPlayer?.replaceCurrentItem(with: nil)
         standbyPlayer = nil
