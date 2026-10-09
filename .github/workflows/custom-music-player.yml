@@ -16,6 +16,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  spatial-stream-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg if needed
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -1
+      - name: Test AAC HLS spatial output
+        run: node --test server/test/spatial-stream.test.js
+
   build:
     runs-on: xcode-27
     steps:
@@ -26,8 +40,6 @@ jobs:
           xcrun --sdk appletvos --show-sdk-version
       - name: Test playback decoding and lyric timing
         run: bash client-tvos/test-models.sh
-      - name: Test spatial HLS audio output
-        run: node --test server/test/spatial-stream.test.js
       - name: Build unsigned Apple TV IPA
         working-directory: client-tvos
         env:
