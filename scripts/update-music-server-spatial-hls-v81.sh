@@ -2,7 +2,7 @@
 set -euo pipefail
 # Adds FFmpeg-powered stereo widening to the existing Docker music server.
 # Keeps existing OAuth, preferences, cookies, playlists and server data.
-revision=3f6edf4493a6177b32f057765819422749d737d3
+revision=20ee085518639bb91656e2ba679880c865137284
 repo=https://raw.githubusercontent.com/Cb541/ytb-music-tv/$revision
 container=$(docker ps -aq --filter label=com.docker.compose.service=ytb-music-tv-server | head -n 1)
 if [[ -z "$container" ]]; then
