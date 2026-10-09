@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { analyzeAutoEQ, autoEQFilter } from './auto-eq.js';
 
 const active = new Map();
 const MAX_JOBS = 5;
@@ -13,6 +14,7 @@ const FFMPEG = process.env.YTB_MUSIC_TV_FFMPEG || 'ffmpeg';
 // A fixed family of center-preserving mid/side width profiles.
 // Loudness decreases slightly as width rises, to limit peak clipping.
 const STEREO_FILTERS = Object.freeze({
+  off: 'aformat=channel_layouts=stereo',
   balanced: 'aformat=channel_layouts=stereo,stereotools=slev=1.30:mlev=1:level_out=0.88',
   immersive: 'aformat=channel_layouts=stereo,stereotools=slev=1.65:mlev=1:level_out=0.79',
   maximum: 'aformat=channel_layouts=stereo,stereotools=slev=2.00:mlev=1:level_out=0.68',
@@ -36,7 +38,7 @@ const cleanExpired = async () => {
 
 const isVideoId = (id) => /^[a-zA-Z0-9_-]{11}$/.test(id || '');
 
-async function initialize(videoId, profile, youtubeService) {
+async function initialize(videoId, profile, autoEQ, youtubeService) {
   const resolved = await youtubeService.resolveStream(
     { id: videoId, videoId, title: videoId, artist: '' },
     { preferVideo: false, quality: 'best' },
@@ -46,6 +48,8 @@ async function initialize(videoId, profile, youtubeService) {
     throw new Error('No usable audio stream found');
   }
 
+  const gains = autoEQ ? await analyzeAutoEQ(videoId, source) : null;
+  const filter = gains ? STEREO_FILTERS[profile] + ',' + autoEQFilter(gains) : STEREO_FILTERS[profile];
   const directory = await mkdtemp(join(tmpdir(), 'ytb-spatial-'));
   const manifest = join(directory, 'index.m3u8');
   const args = [
@@ -53,7 +57,7 @@ async function initialize(videoId, profile, youtubeService) {
     '-rw_timeout', '16000000',
     '-i', source,
     '-map', '0:a:0', '-vn', '-sn', '-dn',
-    '-af', STEREO_FILTERS[profile],
+    '-af', filter,
     '-ar', '48000', '-ac', '2', '-c:a', 'aac', '-b:a', '256k',
     '-f', 'hls', '-hls_time', '3', '-hls_list_size', '0',
     '-hls_playlist_type', 'event', '-hls_flags', 'independent_segments+temp_file',
@@ -97,14 +101,14 @@ async function initialize(videoId, profile, youtubeService) {
   return job;
 }
 
-async function getJob(videoId, profile, youtubeService) {
+async function getJob(videoId, profile, autoEQ, youtubeService) {
   if (!isVideoId(videoId) || !Object.hasOwn(STEREO_FILTERS, profile)) {
     const error = new Error('Invalid video ID');
     error.status = 400;
     throw error;
   }
   await cleanExpired();
-  const cacheKey = videoId + ':' + profile;
+  const cacheKey = videoId + ':' + profile + ':' + (autoEQ ? 'auto' : 'flat');
   let entry = active.get(cacheKey);
   if (!entry) {
     if (active.size >= MAX_JOBS) {
@@ -125,7 +129,7 @@ async function getJob(videoId, profile, youtubeService) {
       error.status = 503;
       throw error;
     }
-    const promise = initialize(videoId, profile, youtubeService).catch((error) => {
+    const promise = initialize(videoId, profile, autoEQ, youtubeService).catch((error) => {
       active.delete(cacheKey);
       throw error;
     });
@@ -164,7 +168,7 @@ const awaitManifest = async (job, { complete = false } = {}) => {
   throw new Error('Spatial audio preparation exceeded the startup deadline');
 };
 
-export const serveSpatialStream = async ({ req, res, videoId, profile = 'balanced', filename, youtubeService }) => {
+export const serveSpatialStream = async ({ req, res, videoId, profile = 'balanced', autoEQ = false, filename, youtubeService }) => {
   const headers = {
     'access-control-allow-origin': '*',
     'cache-control': 'no-store',
@@ -177,7 +181,7 @@ export const serveSpatialStream = async ({ req, res, videoId, profile = 'balance
       res.writeHead(404, headers); res.end(); return;
     }
 
-    const job = await getJob(videoId, profile, youtubeService);
+    const job = await getJob(videoId, profile, autoEQ, youtubeService);
     if (filename === 'ready') {
       await awaitManifest(job, { complete: true });
       res.writeHead(200, { ...headers, 'content-type': 'text/plain; charset=utf-8' });
@@ -211,5 +215,5 @@ export const serveSpatialStream = async ({ req, res, videoId, profile = 'balance
   }
 };
 
-export const spatialStreamURL = (baseURL, videoId, profile = 'balanced') =>
-  new URL('/api/spatial/' + encodeURIComponent(videoId) + '/' + profile + '/index.m3u8', baseURL).toString();
+export const spatialStreamURL = (baseURL, videoId, profile = 'balanced', autoEQ = false) =>
+  new URL('/api/spatial/' + encodeURIComponent(videoId) + '/' + profile + '/' + (autoEQ ? 'auto' : 'flat') + '/index.m3u8', baseURL).toString();
