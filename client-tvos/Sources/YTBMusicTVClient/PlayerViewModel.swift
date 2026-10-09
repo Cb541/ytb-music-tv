@@ -67,72 +67,114 @@ final class PlayerViewModel: ObservableObject {
         return min(12, max(0, value))
     }
     private var spatialAudioEnabled = UserDefaults.standard.bool(forKey: "YTBMusicTV.spatialAudioEnabled")
-    private var spatialTapAvailable = true
-    private var spatialTapWatchdogTask: Task<Void, Never>?
+    private var spatialPlaybackActive = false
+    private var spatialOriginalURL: URL?
+    private var spatialOriginalHasVideo = false
+    private var spatialSwitchGeneration = UUID()
+    private var spatialWatchdog: Task<Void, Never>?
 
-    /// Changing a sound effect while streaming must never replace the active
-    /// AVPlayerItem.audioMix. Only update the atomic switch in its existing tap.
+    // Never attach an AVAudioMix tap to Apple TV streaming playback: it
+    // prevented every track from loading on this device. The Docker companion
+    // server provides ordinary, seekable AAC/HLS with the effect already applied.
+    private func spatialStreamURL(for media: MediaItem) -> URL? {
+        guard let client, let id = media.videoId,
+              id.count == 11,
+              id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+        else { return nil }
+        return client.baseURL.appending(path: "/api/spatial/\(id)/index.m3u8")
+    }
+
     func setSpatialAudioEnabled(_ enabled: Bool) {
         guard enabled != spatialAudioEnabled else { return }
-        if enabled && !spatialTapAvailable {
-            spatialAudioEnabled = false
-            UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
-            errorMessage = "Spatial Audio is unavailable for this stream. Normal playback is protected."
-            return
-        }
         spatialAudioEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "YTBMusicTV.spatialAudioEnabled")
-        if let item = player.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
-        if let item = standbyPlayer?.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
-        if let item = fadingOutPlayer?.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
-        // Keep recovery armed even when Off: the tap stays attached but bypassed,
-        // so we must also recover if an output device cannot accept that mix.
-        if let item = player.currentItem { monitorSpatialTapPlayback(for: item) }
-    }
+        spatialSwitchGeneration = UUID()
+        let generation = spatialSwitchGeneration
+        spatialWatchdog?.cancel()
 
-    /// Called before a player takes ownership of a newly created item.
-    /// This installs exactly once, even for prefetched/Crossfade items.
-    private func configureSpatialAudio(for item: AVPlayerItem) {
-        guard spatialTapAvailable else { return }
-        if !MusicStereoWidening.install(on: item, strength: 0.30, enabled: spatialAudioEnabled) {
-            // New tap creation failed: keep native audio intact.
-            spatialTapAvailable = false
-            spatialAudioEnabled = false
-            UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+        guard state?.status == "playing", let media = state?.currentMedia else { return }
+        if !enabled {
+            if spatialPlaybackActive, let normal = spatialOriginalURL {
+                let resumeTime = player.currentTime()
+                spatialPlaybackActive = false
+                currentStreamHasVideo = spatialOriginalHasVideo
+                fallbackPlaybackURLs = []
+                replacePlayerItem(url: normal)
+                Task { await player.seek(to: resumeTime) }
+            }
+            invalidateNextPlaybackCache()
+            scheduleNextPlaybackPrecache()
+            return
+        }
+
+        guard !spatialPlaybackActive, let url = spatialStreamURL(for: media) else { return }
+        let readiness = url.deletingLastPathComponent().appending(path: "ready")
+        let currentID = state?.currentMediaId
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var request = URLRequest(url: readiness)
+            request.timeoutInterval = 38
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                guard self.spatialSwitchGeneration == generation,
+                      self.state?.currentMediaId == currentID,
+                      self.spatialAudioEnabled else { return }
+                // The regular player keeps playing while the entire HLS stream
+                // is prepared; only switch when seeking to its current timestamp works.
+                let resumeTime = self.player.currentTime()
+                self.spatialOriginalURL = self.state?.currentMedia?.playbackUrl
+                    ?? (self.player.currentItem?.asset as? AVURLAsset)?.url
+                guard self.spatialOriginalURL != nil else { return }
+                self.spatialOriginalHasVideo = self.currentStreamHasVideo
+                self.spatialPlaybackActive = true
+                self.currentStreamHasVideo = false
+                self.currentAudioBitrate = 256_000
+                self.fallbackPlaybackURLs = [self.spatialOriginalURL!]
+                self.replacePlayerItem(url: url)
+                await self.player.seek(to: resumeTime)
+                self.invalidateNextPlaybackCache()
+                self.scheduleNextPlaybackPrecache()
+            } catch {
+                guard self.spatialSwitchGeneration == generation else { return }
+                self.spatialAudioEnabled = false
+                UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+                self.errorMessage = "Spatial Audio needs the updated companion server. Normal music playback continues."
+            }
         }
     }
 
-    /// When the tvOS audio tap rejects a particular streamed format, retry
-    /// the same source without the tap rather than leaving the song loading.
-    private func restoreNormalAudioIfTapFails(for item: AVPlayerItem) -> Bool {
-        guard spatialTapAvailable,
-              MusicStereoWidening.isInstalled(on: item),
-              player.currentItem === item else { return false }
-        spatialTapAvailable = false
+    @discardableResult
+    private func restoreNormalAudioIfSpatialFails(for item: AVPlayerItem) -> Bool {
+        guard spatialPlaybackActive, player.currentItem === item,
+              let normal = spatialOriginalURL else { return false }
+        let resume = player.currentTime()
+        spatialPlaybackActive = false
         spatialAudioEnabled = false
+        spatialSwitchGeneration = UUID()
+        spatialWatchdog?.cancel()
         UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
-        spatialTapWatchdogTask?.cancel()
-        let resumeAt = player.currentTime()
-        let replacement = AVPlayerItem(asset: item.asset)
-        replacePlayerItem(item: replacement)
-        if resumeAt.isValid && CMTimeGetSeconds(resumeAt) > 0.5 {
-            player.seek(to: resumeAt)
-        }
-        errorMessage = "Spatial Audio was disabled because this stream could not play with the audio effect. Normal audio has been restored."
+        currentStreamHasVideo = spatialOriginalHasVideo
+        fallbackPlaybackURLs = []
+        replacePlayerItem(url: normal)
+        Task { await player.seek(to: resume) }
+        errorMessage = "The processed stream was unavailable. Normal audio has been restored."
         return true
     }
 
-    private func monitorSpatialTapPlayback(for item: AVPlayerItem) {
-        spatialTapWatchdogTask?.cancel()
-        guard spatialTapAvailable,
-              MusicStereoWidening.isInstalled(on: item) else { return }
-        spatialTapWatchdogTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(8))
+    private func monitorSpatialPlayback(for item: AVPlayerItem) {
+        spatialWatchdog?.cancel()
+        guard spatialPlaybackActive else { return }
+        spatialWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(14))
             guard !Task.isCancelled, let self,
                   self.player.currentItem === item,
                   self.state?.status == "playing",
                   self.player.timeControlStatus != .playing else { return }
-            _ = self.restoreNormalAudioIfTapFails(for: item)
+            _ = self.restoreNormalAudioIfSpatialFails(for: item)
         }
     }
 
@@ -1067,7 +1109,6 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func replacePlayerItem(item: AVPlayerItem) {
-        configureSpatialAudio(for: item)
         cancelCrossfade()
         removePlaybackTimeObserver()
         player.pause()
@@ -1079,7 +1120,7 @@ final class PlayerViewModel: ObservableObject {
         installTimeObserverIfNeeded()
         player.volume = 1
         player.playImmediately(atRate: 1)
-        monitorSpatialTapPlayback(for: item)
+        monitorSpatialPlayback(for: item)
     }
 
     private func observeTimeControlStatus() {
@@ -1190,7 +1231,7 @@ final class PlayerViewModel: ObservableObject {
                     self.refreshPlaybackTiming(for: item)
                     if self.crossfadeTask == nil { self.player.volume = 1 }
                 case .failed:
-                    if self.restoreNormalAudioIfTapFails(for: item) { return }
+                    if self.restoreNormalAudioIfSpatialFails(for: item) { return }
                     if self.retryFallbackPlayback(failedItem: item) {
                         return
                     }
@@ -1550,7 +1591,6 @@ final class PlayerViewModel: ObservableObject {
                     item: item
                 )
                 if let item {
-                    self.configureSpatialAudio(for: item)
                     let prepared = AVPlayer(playerItem: item)
                     prepared.volume = 0
                     prepared.automaticallyWaitsToMinimizeStalling = true
@@ -1725,7 +1765,6 @@ final class PlayerViewModel: ObservableObject {
         // AVPlayerItems are owned by their deck. A manual skip gets a fresh item,
         // even when AVFoundation is still releasing the standby deck's item.
         let freshItem = cache.item.map { AVPlayerItem(asset: $0.asset) }
-        if let freshItem { configureSpatialAudio(for: freshItem) }
         standbyPlayer?.pause()
         standbyPlayer?.replaceCurrentItem(with: nil)
         standbyPlayer = nil
