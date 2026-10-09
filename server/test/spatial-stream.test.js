@@ -40,6 +40,7 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
     await serveSpatialStream({
       req, res, videoId: 'testMusic01',
       profile: req.url.split('/')[1] || 'balanced',
+      autoEQ: req.url.split('/')[2] === 'auto',
       filename: req.url.split('/').at(-1),
       youtubeService: musicService,
     });
@@ -47,7 +48,7 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
   mediaServer.listen(0, '127.0.0.1');
   await once(mediaServer, 'listening');
   const origin = 'http://127.0.0.1:' + mediaServer.address().port;
-  const base = origin + '/balanced';
+  const base = origin + '/balanced/flat';
 
   try {
     const manifestResponse = await fetch(base + '/index.m3u8');
@@ -81,18 +82,30 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
     // Verify all three distinct profiles are independently generated and
     // do not collide in the encoder/segment cache.
     for (const profile of ['immersive', 'maximum']) {
-      const response = await fetch(origin + '/' + profile + '/ready', {
+      const response = await fetch(origin + '/' + profile + '/flat/ready', {
         signal: AbortSignal.timeout(32_000),
       });
       assert.equal(response.status, 200, profile + ' did not prepare');
-      const manifest = await (await fetch(origin + '/' + profile + '/index.m3u8')).text();
+      const manifest = await (await fetch(origin + '/' + profile + '/flat/index.m3u8')).text();
       assert.match(manifest, /#EXT-X-ENDLIST/, profile + ' did not finalize');
       const file = manifest.match(/\b\d{5}\.ts\b/)?.[0];
       assert.ok(file, 'Missing ' + profile + ' segment');
-      const segment = await fetch(origin + '/' + profile + '/' + file);
+      const segment = await fetch(origin + '/' + profile + '/flat/' + file);
       assert.equal(segment.status, 200);
       assert.ok((await segment.arrayBuffer()).byteLength > 1000);
     }
+    // Auto EQ must be available without any stereo width processing.
+    const analyzed = await fetch(origin + '/off/auto/ready', {
+      signal: AbortSignal.timeout(55_000),
+    });
+    assert.equal(analyzed.status, 200, 'Auto EQ did not prepare');
+    const autoManifest = await (await fetch(origin + '/off/auto/index.m3u8')).text();
+    assert.match(autoManifest, /#EXT-X-ENDLIST/);
+    const autoSegment = autoManifest.match(/\b\d{5}\.ts\b/)?.[0];
+    assert.ok(autoSegment, 'Auto EQ did not produce AAC HLS segments');
+    const autoResponse = await fetch(origin + '/off/auto/' + autoSegment);
+    assert.equal(autoResponse.status, 200);
+    assert.ok((await autoResponse.arrayBuffer()).byteLength > 1000);
   } finally {
     sourceServer.close();
     mediaServer.close();
