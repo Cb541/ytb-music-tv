@@ -81,7 +81,8 @@ struct MusicPlayerScreen: View {
                     .buttonStyle(RemoteButtonStyle())
                     .focusEffectDisabled().focused($focusedControl, equals: "Artist")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, -30)
+                    .padding(.leading, -48)
+                    .offset(y: -5)
                     .disabled(displayedMedia == nil || viewModel.isSearching)
                     GeometryReader { stage in
                         let coverSide = lyricsVisible
@@ -250,7 +251,7 @@ struct MusicPlayerScreen: View {
                 // reach Lyrics/Queue/Crossfade instead of the seek slider.
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    HStack(spacing: 0) {
+                    HStack(spacing: 6) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -283,7 +284,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityLabel("Audio effects and crossfade")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
-                    .padding(.trailing, -25)
+                    .padding(.trailing, -70)
                     .offset(y: 31)
                 }
                 .focusSection()
