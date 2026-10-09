@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Adds FFmpeg-powered stereo widening to the existing Docker music server.
+# Installs Balanced, Immersive and Maximum FFmpeg stereo-widening modes.
 # Keeps existing OAuth, preferences, cookies, playlists and server data.
 revision=0a24ec806a8677936c9623b3f340bbf696353a26
 repo=https://raw.githubusercontent.com/Cb541/ytb-music-tv/$revision
