@@ -140,7 +140,7 @@ struct MusicPlayerScreen: View {
                 await viewModel?.albumCoverURL(for: media)
             }
         }
-        .onAppear { viewModel.setSpatialAudioEnabled(spatialAudioEnabled); focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
+        .onAppear { focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
         .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }
         .onChange(of: scrubbing) { noteControlActivity() }
         .onChange(of: controlsVisible) {
