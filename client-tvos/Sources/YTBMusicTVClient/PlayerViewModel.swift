@@ -67,7 +67,8 @@ final class PlayerViewModel: ObservableObject {
         return min(12, max(0, value))
     }
     private var spatialAudioProfile = UserDefaults.standard.string(forKey: "YTBMusicTV.spatialAudioProfile") ?? "off"
-    private var spatialAudioEnabled: Bool { spatialAudioProfile != "off" }
+    private var autoEQEnabled = UserDefaults.standard.bool(forKey: "YTBMusicTV.autoEQEnabled")
+    private var spatialAudioEnabled: Bool { spatialAudioProfile != "off" || autoEQEnabled }
     private var spatialAudioRequested = false
     private var spatialPlaybackActive = false
     private var spatialOriginalURL: URL?
@@ -83,16 +84,26 @@ final class PlayerViewModel: ObservableObject {
               id.count == 11,
               id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
         else { return nil }
-        return client.baseURL.appending(path: "/api/spatial/\(id)/\(spatialAudioProfile)/index.m3u8")
+        return client.baseURL.appending(path: "/api/spatial/\(id)/\(spatialAudioProfile)/\(autoEQEnabled ? "auto" : "flat")/index.m3u8")
     }
 
     func setSpatialAudioProfile(_ selected: String) {
         guard ["off", "balanced", "immersive", "maximum"].contains(selected),
               selected != spatialAudioProfile else { return }
-        let previous = spatialAudioProfile
         spatialAudioProfile = selected
         UserDefaults.standard.set(selected, forKey: "YTBMusicTV.spatialAudioProfile")
-        let enabled = selected != "off"
+        reloadAudioEffects()
+    }
+
+    func setAutoEQEnabled(_ selected: Bool) {
+        guard selected != autoEQEnabled else { return }
+        autoEQEnabled = selected
+        UserDefaults.standard.set(selected, forKey: "YTBMusicTV.autoEQEnabled")
+        reloadAudioEffects()
+    }
+
+    private func reloadAudioEffects() {
+        let enabled = spatialAudioEnabled
         // Changing between two enabled profiles must load a new HLS URL.
         // First resume the unprocessed source to avoid interrupting audio
         // while the next selected stream is being prepared.
@@ -109,7 +120,6 @@ final class PlayerViewModel: ObservableObject {
                 await originalPlayer.seek(to: resumeTime)
             }
         }
-        if !enabled && previous == "off" { return }
         spatialSwitchGeneration = UUID()
         let generation = spatialSwitchGeneration
         spatialWatchdog?.cancel()
@@ -160,8 +170,10 @@ final class PlayerViewModel: ObservableObject {
             } catch {
                 guard self.spatialSwitchGeneration == generation else { return }
                 self.spatialAudioProfile = "off"
+                self.autoEQEnabled = false
                 UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
-                self.errorMessage = "Spatial Audio needs the updated companion server. Normal music playback continues."
+                UserDefaults.standard.set(false, forKey: "YTBMusicTV.autoEQEnabled")
+                self.errorMessage = "The enhanced audio stream is unavailable. Normal music playback continues."
             }
         }
     }
@@ -173,9 +185,11 @@ final class PlayerViewModel: ObservableObject {
         let resume = player.currentTime()
         spatialPlaybackActive = false
         spatialAudioProfile = "off"
+        autoEQEnabled = false
         spatialSwitchGeneration = UUID()
         spatialWatchdog?.cancel()
         UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
+        UserDefaults.standard.set(false, forKey: "YTBMusicTV.autoEQEnabled")
         currentStreamHasVideo = spatialOriginalHasVideo
         fallbackPlaybackURLs = []
         replacePlayerItem(url: normal)
@@ -1301,9 +1315,11 @@ final class PlayerViewModel: ObservableObject {
         guard player.currentItem === failedItem, !fallbackPlaybackURLs.isEmpty else { return false }
         if spatialPlaybackActive {
             spatialAudioProfile = "off"
+            autoEQEnabled = false
             spatialPlaybackActive = false
             spatialSwitchGeneration = UUID()
             UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
+            UserDefaults.standard.set(false, forKey: "YTBMusicTV.autoEQEnabled")
             currentStreamHasVideo = spatialOriginalHasVideo
         }
         let fallbackPlaybackURL = fallbackPlaybackURLs.removeFirst()
