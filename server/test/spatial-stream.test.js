@@ -87,7 +87,7 @@ test('spatial endpoint serves decoded playable HLS AAC segments', { skip: !tools
       assert.equal(response.status, 200, profile + ' did not prepare');
       const manifest = await (await fetch(origin + '/' + profile + '/index.m3u8')).text();
       assert.match(manifest, /#EXT-X-ENDLIST/, profile + ' did not finalize');
-      const file = manifest.match(/\\b\\d{5}\\.ts\\b/)?.[0];
+      const file = manifest.match(/\b\d{5}\.ts\b/)?.[0];
       assert.ok(file, 'Missing ' + profile + ' segment');
       const segment = await fetch(origin + '/' + profile + '/' + file);
       assert.equal(segment.status, 200);
