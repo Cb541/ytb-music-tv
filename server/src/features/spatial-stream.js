@@ -102,6 +102,19 @@ async function getJob(videoId, youtubeService) {
   let entry = active.get(videoId);
   if (!entry) {
     if (active.size >= MAX_JOBS) {
+      // Do not block the next song after the first eight songs in a playlist.
+      // Evict the oldest finished encoder while leaving active stream
+      // processes alone; a later seek can regenerate an evicted stream.
+      const finished = [...active.entries()]
+        .filter(([, value]) => value.job?.completed || value.job?.failed)
+        .sort((a, b) => a[1].accessed - b[1].accessed);
+      if (finished.length) {
+        const [oldKey, oldEntry] = finished[0];
+        active.delete(oldKey);
+        await rm(oldEntry.job.directory, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+    if (active.size >= MAX_JOBS) {
       const error = new Error('Spatial stream processor is busy; normal audio remains available');
       error.status = 503;
       throw error;
@@ -110,11 +123,12 @@ async function getJob(videoId, youtubeService) {
       active.delete(videoId);
       throw error;
     });
-    entry = { promise, accessed: Date.now() };
+    entry = { promise, accessed: Date.now(), job: null };
     active.set(videoId, entry);
   }
   entry.accessed = Date.now();
   const job = await entry.promise;
+  entry.job = job;
   job.accessed = Date.now();
   return job;
 }
