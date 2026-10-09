@@ -6,6 +6,10 @@ on:
     branches: [custom-music-player, "custom-music-player-*"]
     paths:
       - 'client-tvos/**'
+      - 'server/src/features/spatial-stream.js'
+      - 'server/src/lib/router.js'
+      - 'server/test/spatial-stream.test.js'
+      - 'server/Dockerfile'
       - '.github/workflows/custom-music-player.yml'
 
 permissions:
