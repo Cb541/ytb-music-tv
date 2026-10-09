@@ -66,7 +66,9 @@ final class PlayerViewModel: ObservableObject {
             ? 5.0 : defaults.double(forKey: "YTBMusicTV.crossfadeSeconds")
         return min(12, max(0, value))
     }
-    private var spatialAudioEnabled = UserDefaults.standard.bool(forKey: "YTBMusicTV.spatialAudioEnabled")
+    private var spatialAudioProfile = UserDefaults.standard.string(forKey: "YTBMusicTV.spatialAudioProfile") ?? "off"
+    private var spatialAudioEnabled: Bool { spatialAudioProfile != "off" }
+    private var spatialAudioRequested = false
     private var spatialPlaybackActive = false
     private var spatialOriginalURL: URL?
     private var spatialOriginalHasVideo = false
@@ -81,27 +83,34 @@ final class PlayerViewModel: ObservableObject {
               id.count == 11,
               id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
         else { return nil }
-        return client.baseURL.appending(path: "/api/spatial/\(id)/index.m3u8")
+        return client.baseURL.appending(path: "/api/spatial/\(id)/\(spatialAudioProfile)/index.m3u8")
     }
 
-    func setSpatialAudioEnabled(_ enabled: Bool) {
-        guard enabled != spatialAudioEnabled else { return }
-        spatialAudioEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "YTBMusicTV.spatialAudioEnabled")
+    func setSpatialAudioProfile(_ selected: String) {
+        guard ["off", "balanced", "immersive", "maximum"].contains(selected),
+              selected != spatialAudioProfile else { return }
+        let previous = spatialAudioProfile
+        spatialAudioProfile = selected
+        UserDefaults.standard.set(selected, forKey: "YTBMusicTV.spatialAudioProfile")
+        let enabled = selected != "off"
+        // Changing between two enabled profiles must load a new HLS URL.
+        // First resume the unprocessed source to avoid interrupting audio
+        // while the next selected stream is being prepared.
+        if spatialPlaybackActive, let normal = spatialOriginalURL {
+            let resumeTime = player.currentTime()
+            spatialPlaybackActive = false
+            currentStreamHasVideo = spatialOriginalHasVideo
+            fallbackPlaybackURLs = []
+            replacePlayerItem(url: normal)
+            Task { await player.seek(to: resumeTime) }
+        }
+        if !enabled && previous == "off" { return }
         spatialSwitchGeneration = UUID()
         let generation = spatialSwitchGeneration
         spatialWatchdog?.cancel()
 
         guard state?.status == "playing", let media = state?.currentMedia else { return }
         if !enabled {
-            if spatialPlaybackActive, let normal = spatialOriginalURL {
-                let resumeTime = player.currentTime()
-                spatialPlaybackActive = false
-                currentStreamHasVideo = spatialOriginalHasVideo
-                fallbackPlaybackURLs = []
-                replacePlayerItem(url: normal)
-                Task { await player.seek(to: resumeTime) }
-            }
             invalidateNextPlaybackCache()
             scheduleNextPlaybackPrecache()
             return
@@ -140,8 +149,8 @@ final class PlayerViewModel: ObservableObject {
                 self.scheduleNextPlaybackPrecache()
             } catch {
                 guard self.spatialSwitchGeneration == generation else { return }
-                self.spatialAudioEnabled = false
-                UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+                self.spatialAudioProfile = "off"
+                UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
                 self.errorMessage = "Spatial Audio needs the updated companion server. Normal music playback continues."
             }
         }
@@ -153,10 +162,10 @@ final class PlayerViewModel: ObservableObject {
               let normal = spatialOriginalURL else { return false }
         let resume = player.currentTime()
         spatialPlaybackActive = false
-        spatialAudioEnabled = false
+        spatialAudioProfile = "off"
         spatialSwitchGeneration = UUID()
         spatialWatchdog?.cancel()
-        UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+        UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
         currentStreamHasVideo = spatialOriginalHasVideo
         fallbackPlaybackURLs = []
         replacePlayerItem(url: normal)
@@ -1267,10 +1276,10 @@ final class PlayerViewModel: ObservableObject {
     private func retryFallbackPlayback(failedItem: AVPlayerItem) -> Bool {
         guard player.currentItem === failedItem, !fallbackPlaybackURLs.isEmpty else { return false }
         if spatialPlaybackActive {
-            spatialAudioEnabled = false
+            spatialAudioProfile = "off"
             spatialPlaybackActive = false
             spatialSwitchGeneration = UUID()
-            UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+            UserDefaults.standard.set("off", forKey: "YTBMusicTV.spatialAudioProfile")
             currentStreamHasVideo = spatialOriginalHasVideo
         }
         let fallbackPlaybackURL = fallbackPlaybackURLs.removeFirst()
