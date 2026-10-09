@@ -74,16 +74,20 @@ final class PlayerViewModel: ObservableObject {
     /// AVPlayerItem.audioMix. Only update the atomic switch in its existing tap.
     func setSpatialAudioEnabled(_ enabled: Bool) {
         guard enabled != spatialAudioEnabled else { return }
+        if enabled && !spatialTapAvailable {
+            spatialAudioEnabled = false
+            UserDefaults.standard.set(false, forKey: "YTBMusicTV.spatialAudioEnabled")
+            errorMessage = "Spatial Audio is unavailable for this stream. Normal playback is protected."
+            return
+        }
         spatialAudioEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "YTBMusicTV.spatialAudioEnabled")
         if let item = player.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
         if let item = standbyPlayer?.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
         if let item = fadingOutPlayer?.currentItem { MusicStereoWidening.setEnabled(enabled, on: item) }
-        if enabled {
-            if let item = player.currentItem { monitorSpatialTapPlayback(for: item) }
-        } else {
-            spatialTapWatchdogTask?.cancel()
-        }
+        // Keep recovery armed even when Off: the tap stays attached but bypassed,
+        // so we must also recover if an output device cannot accept that mix.
+        if let item = player.currentItem { monitorSpatialTapPlayback(for: item) }
     }
 
     /// Called before a player takes ownership of a newly created item.
@@ -120,7 +124,7 @@ final class PlayerViewModel: ObservableObject {
 
     private func monitorSpatialTapPlayback(for item: AVPlayerItem) {
         spatialTapWatchdogTask?.cancel()
-        guard spatialAudioEnabled, spatialTapAvailable,
+        guard spatialTapAvailable,
               MusicStereoWidening.isInstalled(on: item) else { return }
         spatialTapWatchdogTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(8))
