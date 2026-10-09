@@ -289,10 +289,10 @@ export const createApiRouter = ({
 
     // HLS AAC rendered by FFmpeg, without modifying AVPlayerItem.audioMix.
     // Segments are temporary and remain separate from normal playback.
-    const spatialMatch = pathname.match(/^\/api\/spatial\/([A-Za-z0-9_-]{11})\/(balanced|immersive|maximum)\/(index\.m3u8|ready|[0-9]{5}\.ts)$/);
+    const spatialMatch = pathname.match(/^\/api\/spatial\/([A-Za-z0-9_-]{11})\/(off|balanced|immersive|maximum)\/(auto|flat)\/(index\.m3u8|ready|[0-9]{5}\.ts)$/);
     if (spatialMatch) {
       return await serveSpatialStream({
-        req, res, videoId: spatialMatch[1], profile: spatialMatch[2], filename: spatialMatch[3], youtubeService,
+        req, res, videoId: spatialMatch[1], profile: spatialMatch[2], autoEQ: spatialMatch[3] === 'auto', filename: spatialMatch[4], youtubeService,
       });
     }
 
