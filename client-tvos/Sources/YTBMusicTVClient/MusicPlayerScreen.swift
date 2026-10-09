@@ -257,6 +257,10 @@ struct MusicPlayerScreen: View {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
+                        Button {} label: {
+                            Label(viewModel.audioEffectsPlaybackStatus, systemImage: "waveform")
+                        }
+                        .disabled(true)
                         Picker("Spatial Audio", selection: $spatialAudioProfile) {
                             Text("Off — Original Audio").tag("off")
                             Text("Balanced — Gentle Width").tag("balanced")
