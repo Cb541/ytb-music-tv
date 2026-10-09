@@ -7,6 +7,7 @@ on:
     paths:
       - 'client-tvos/**'
       - 'server/src/features/spatial-stream.js'
+      - 'server/src/features/auto-eq.js'
       - 'server/src/lib/router.js'
       - 'server/test/spatial-stream.test.js'
       - 'server/Dockerfile'
