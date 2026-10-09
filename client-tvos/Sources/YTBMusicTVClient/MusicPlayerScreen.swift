@@ -15,6 +15,7 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
     @AppStorage("YTBMusicTV.spatialAudioProfile") private var spatialAudioProfile = "off"
+    @AppStorage("YTBMusicTV.autoEQEnabled") private var autoEQEnabled = false
     @State private var showingQueue = false
     @FocusState private var queueCloseFocused: Bool
     @FocusState private var focusedQueueID: String?
@@ -154,6 +155,7 @@ struct MusicPlayerScreen: View {
         .simultaneousGesture(TapGesture().onEnded(noteControlActivity))
         .onChange(of: crossfadeSeconds) { noteControlActivity() }
         .onChange(of: spatialAudioProfile) { viewModel.setSpatialAudioProfile(spatialAudioProfile); noteControlActivity() }
+        .onChange(of: autoEQEnabled) { viewModel.setAutoEQEnabled(autoEQEnabled); noteControlActivity() }
         .onMoveCommand { _ in noteControlActivity() }
         .task(id: controlActivityRevision) {
             do { try await Task.sleep(for: .seconds(2)) }
@@ -262,6 +264,7 @@ struct MusicPlayerScreen: View {
                             Text("Maximum — Strongest Width").tag("maximum")
                         }
                         .accessibilityLabel("Spatial Audio profile")
+                        Toggle("Auto EQ — Adapt to Song", isOn: $autoEQEnabled)
                         Picker("Crossfade", selection: $crossfadeSeconds) {
                             Text("Off").tag(0.0)
                             ForEach(1...12, id: \.self) { Text("\($0) sec").tag(Double($0)) }
