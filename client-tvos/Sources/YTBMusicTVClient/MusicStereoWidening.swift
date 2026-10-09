@@ -164,18 +164,17 @@ enum MusicStereoWidening {
             return false
         }
 
-        var unmanagedTap: Unmanaged<MTAudioProcessingTap>?
+        var managedTap: MTAudioProcessingTap?
         let result = MTAudioProcessingTapCreateWithPreferredFormat(
             kCFAllocatorDefault, &callbacks,
             kMTAudioProcessingTapCreationFlag_PostEffects,
-            preferred, &unmanagedTap
+            preferred, &managedTap
         )
-        guard result == noErr, let unmanagedTap else {
+        guard result == noErr, let tap = managedTap else {
             Unmanaged<StereoWidthTapState>.fromOpaque(pointer).release()
             return false
         }
 
-        let tap = unmanagedTap.takeRetainedValue()
         let parameters = AVMutableAudioMixInputParameters()
         // tvOS 27 AVAudioMixInputParametersTrackMixID == 0. The default
         // factory initializes this to the complete decoded track mix.
