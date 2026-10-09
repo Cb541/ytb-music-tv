@@ -1,0 +1,40 @@
+name: MusicKit Atmos Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['musickit-atmos-test-*']
+    paths:
+      - 'client-tvos/musickit-test/**'
+      - '.github/workflows/musickit-atmos-test.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musickit-atmos-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-version
+      - name: Check test input and audio evidence
+        run: |
+          xcrun swiftc -parse-as-library client-tvos/musickit-test/Sources/TestSupport.swift client-tvos/musickit-test/Tests/TestSupportTests.swift -o /tmp/musickit-test-checks
+          /tmp/musickit-test-checks
+      - name: Build unsigned MusicKit test IPA
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          OUTPUT_IPA: ${{ github.workspace }}/MusicKit-Atmos-Test.ipa
+        run: bash client-tvos/musickit-test/build-ipa.sh
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: MusicKit-Atmos-Test
+          path: MusicKit-Atmos-Test.ipa
+          if-no-files-found: error
