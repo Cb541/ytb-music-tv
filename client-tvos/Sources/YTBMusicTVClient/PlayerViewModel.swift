@@ -79,7 +79,7 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func configureSpatialAudio(for item: AVPlayerItem) {
-        item.allowedAudioSpatializationFormats = spatialAudioEnabled ? .monoStereoAndMultichannel : []
+        if spatialAudioEnabled { MusicStereoWidening.install(on: item, strength: 0.30) } else { MusicStereoWidening.disable(on: item) }
     }
 
     let playbackProgress = PlaybackProgress()
