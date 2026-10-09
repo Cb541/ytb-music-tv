@@ -8,5 +8,6 @@ compiler="${SWIFTC:-swiftc}"
   "$script_dir/Sources/YTBMusicTVClient/MusicLyrics.swift" \
   "$script_dir/Sources/YTBMusicTVClient/MusicLookup.swift" \
   "$script_dir/Sources/YTBMusicTVClient/MusicStillCover.swift" \
+  "$script_dir/Sources/YTBMusicTVClient/MusicBackdropState.swift" \
   "$script_dir/Tests/PlaybackAndLyricsTests.swift" -o "$build_dir/test-models"
 "$build_dir/test-models"

@@ -5,6 +5,18 @@ import ImageIO
 @main
 enum PlaybackAndLyricsTests {
     static func main() async throws {
+        var backdrop = MusicBackdropState()
+        let firstCover = backdrop.begin()
+        precondition(backdrop.acceptsStill(firstCover))
+        precondition(backdrop.acceptLive(firstCover))
+        precondition(!backdrop.acceptsStill(firstCover)) // Late catalog result cannot freeze animation.
+        let nextCover = backdrop.begin()
+        precondition(!backdrop.acceptLive(firstCover)) // Previous song's video callback is stale.
+        precondition(!backdrop.acceptsStill(firstCover))
+        precondition(backdrop.acceptsStill(nextCover)) // No animation: keep the static fallback.
+        precondition(backdrop.acceptLive(nextCover))
+        precondition(backdrop.acceptLive(nextCover)) // Loop replicas continue the same generation.
+        precondition(!backdrop.acceptsStill(nextCover))
         let response = #"{"videoId":"song","directUrl":{"unexpected":"object"},"proxyUrl":"http://192.168.1.10:4174/api/stream/song?preferVideo=false","adaptiveVideoUrl":{},"adaptiveAudioUrl":[],"adaptiveVideoProxyUrl":42,"adaptiveAudioProxyUrl":"","expiresAt":1234,"media":{"id":"song","title":"Test song","artist":"Artist","durationMs":"120000","artworkUrl":{},"sourceUrl":[]}}"#
         let stream = try JSONDecoder().decode(ResolvedStream.self, from: Data(response.utf8))
         precondition(stream.directUrl == stream.proxyUrl)
@@ -346,7 +358,7 @@ enum PlaybackAndLyricsTests {
         }
         // The same decision must survive a refreshed URL or promoted crossfade deck.
         precondition(PlaybackTiming.resolve(metadataMs: 240000, streamSeconds: 480, hasVideo: false) == doubledTimeline)
-        print("Playback decoding, lyric timing, and lookup metadata tests passed")
+        print("Playback decoding, lyric timing, lookup metadata, and live backdrop lifecycle tests passed")
     }
 }
 

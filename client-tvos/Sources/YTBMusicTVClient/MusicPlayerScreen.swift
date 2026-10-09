@@ -179,7 +179,10 @@ struct MusicPlayerScreen: View {
                 Image(systemName: "music.note").font(.system(size: 110)).foregroundStyle(.white.opacity(0.3))
             }
             if motionArtwork && !reduceMotion, let url = assets.motionURL {
-                MusicMotionArtwork(url: url, active: scenePhase == .active && viewModel.state?.status == "playing")
+                let token = assets.artworkGeneration
+                MusicMotionArtwork(url: url, active: scenePhase == .active && viewModel.state?.status == "playing") { image in
+                    assets.receiveMotionFrame(image, url: url, token: token)
+                }
             }
         }
         .frame(width: side, height: side)
@@ -517,11 +520,7 @@ private struct MusicAmbientBackground: View {
         ZStack {
             Color(red: 0.025, green: 0.035, blue: 0.028)
             ZStack {
-                if let image = assets.backgroundImage {
-                    MusicWarpedArtwork(image: image, active: !paused)
-                } else {
-                    LinearGradient(colors: assets.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-                }
+                MusicBackdropRenderer(backdrop: assets.backdrop, colors: assets.colors, paused: paused)
                 Color(red: 0.024, green: 0.04, blue: 0.028).opacity(0.42)
                 Color(red: 3.0 / 255, green: 7.0 / 255, blue: 4.0 / 255).opacity(assets.backgroundVeil)
                     .animation(.easeInOut(duration: 1.2), value: assets.backgroundVeil)
@@ -529,6 +528,19 @@ private struct MusicAmbientBackground: View {
             .opacity(0.82)
         }
         .clipped()
+    }
+}
+
+private struct MusicBackdropRenderer: View {
+    @ObservedObject var backdrop: MusicArtworkBackdrop
+    let colors: [Color]
+    let paused: Bool
+    var body: some View {
+        if let frame = backdrop.frame {
+            MusicWarpedArtwork(frame: frame, active: !paused)
+        } else {
+            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
     }
 }
 

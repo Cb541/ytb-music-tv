@@ -2,6 +2,12 @@
 
 Based on Hk-Gosuto/ytb-music-tv nightly commit 336831f, with custom tvOS presentation and Docker server browsing/playback updates.
 
+## Live animated-artwork background
+
+When animated artwork is available, the player backdrop now uses frames from the same muted AVQueuePlayer that displays the cover. It follows the animation's colors and movement, including loop boundaries, without a second video request or player. Low-resolution samples feed the existing 30 fps blurred warp; a 1.8-second entry fade and short frame blends keep transitions smooth. The existing Balanced layer opacity, dark tint, contrast veil, and still-cover Artwork accents remain in place. The veil follows brightness gradually. Static artwork remains the fallback; pause, backgrounding, and Reduce Motion stop frame sampling. Cover framing and playback/audio resolution are unchanged.
+
+Generation checks reject previous-song frames and prevent a delayed still cover from replacing a live backdrop. Tests cover these lifecycle decisions; the full tvOS SDK workflow compiles the frame-output renderer.
+
 ## Changes
 
 - A SwiftUI Now Playing screen with a large square cover, title and artist, album-derived animated background, progress scrubber, transport controls, queue, and lyrics toggle.

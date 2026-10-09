@@ -9,7 +9,7 @@ final class MusicPresentationAssets: ObservableObject {
     @Published var lyrics = MusicLyrics()
     @Published var lyricsLoading = false
     @Published var artworkImage: UIImage?
-    @Published var backgroundImage: UIImage?
+    let backdrop = MusicArtworkBackdrop()
     @Published var motionURL: URL?
     @Published var backgroundVeil = 0.34
     @Published var colors: [Color] = [.black, .gray.opacity(0.15), .black]
@@ -21,7 +21,10 @@ final class MusicPresentationAssets: ObservableObject {
     }
     private var lyricsCache: [String: MusicLyrics] = [:]
     private var artworkCache: [String: MusicArtworkResult] = [:]
-    private var generation = UUID()
+    private var backdropState = MusicBackdropState()
+    var artworkGeneration: UUID { backdropState.generation }
+    private var generation: UUID { backdropState.generation }
+    private var lastVeilTime = 0.0
     private var currentStillSource: StillCoverSource?
     private final class CachedCover: NSObject {
         let cover: ValidatedStillCover
@@ -35,13 +38,13 @@ final class MusicPresentationAssets: ObservableObject {
     }()
 
     func load(_ media: MediaItem?, animated: Bool, albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL? = { _ in nil }) async {
-        let token = UUID(); generation = token; currentStillSource = nil
+        let token = backdropState.begin(); currentStillSource = nil; lastVeilTime = 0
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         // Keep the previous backdrop until a new cover arrives; clearing it
         // would expose a colored fallback during every song transition.
         guard let media else {
             lyricsLoading = false
-            backgroundImage = nil
+            backdrop.frame = nil
             colors = [.black, .gray.opacity(0.15), .black]
             backgroundVeil = 0.34
             return
@@ -172,10 +175,26 @@ final class MusicPresentationAssets: ObservableObject {
         currentStillSource = cover.source
         let image = UIImage(cgImage: cover.image)
         artworkImage = image
-        backgroundImage = image
+        if backdropState.acceptsStill(token) {
+            backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: false)
+        }
         colors = Self.palette(image)
-        backgroundVeil = Self.balancedVeil(image)
+        if backdropState.acceptsStill(token) { backgroundVeil = Self.balancedVeil(image) }
         return true
+    }
+
+    func receiveMotionFrame(_ image: UIImage, url: URL, token: UUID) {
+        guard motionURL == url, backdropState.acceptLive(token) else { return }
+        backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: true)
+        // Follow major brightness changes slowly, without making the veil pulse.
+        let now = CACurrentMediaTime()
+        if now - lastVeilTime >= 0.5 {
+            lastVeilTime = now
+            let target = Self.balancedVeil(image)
+            if abs(target - backgroundVeil) >= 0.005 {
+                backgroundVeil += min(0.03, max(-0.03, target - backgroundVeil))
+            }
+        }
     }
 
     static func balancedVeil(_ image: UIImage) -> Double {
@@ -264,9 +283,23 @@ final class MusicPresentationAssets: ObservableObject {
     }
 }
 
+struct MusicBackdropFrame {
+    let image: UIImage
+    let sourceID: UUID
+    let live: Bool
+}
+
+// Only the background subscribes to video frames; controls and lyrics do not
+// need a SwiftUI update for every frame of the cover animation.
+@MainActor
+final class MusicArtworkBackdrop: ObservableObject {
+    @Published var frame: MusicBackdropFrame?
+}
+
 struct MusicMotionArtwork: UIViewRepresentable {
     let url: URL
     let active: Bool
+    let onFrame: @MainActor (UIImage) -> Void
 
     final class ArtworkView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
@@ -275,6 +308,11 @@ struct MusicMotionArtwork: UIViewRepresentable {
         var looper: AVPlayerLooper?
         var displayObserver: NSKeyValueObservation?
         var url: URL?
+        var onFrame: (@MainActor (UIImage) -> Void)?
+        private var displayLink: CADisplayLink?
+        private var outputItem: AVPlayerItem?
+        private var output: AVPlayerItemVideoOutput?
+        private let frameContext = CIContext(options: [.cacheIntermediates: false])
         override init(frame: CGRect) {
             super.init(frame: frame)
             player.isMuted = true
@@ -290,8 +328,10 @@ struct MusicMotionArtwork: UIViewRepresentable {
             }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-        func update(url: URL, active: Bool) {
+        func update(url: URL, active: Bool, onFrame: @escaping @MainActor (UIImage) -> Void) {
+            self.onFrame = onFrame
             if self.url != url {
+                stopSampling(); detachOutput()
                 player.pause(); looper?.disableLooping(); player.removeAllItems()
                 self.url = url
                 playerLayer.isHidden = true
@@ -300,28 +340,77 @@ struct MusicMotionArtwork: UIViewRepresentable {
                 looper = AVPlayerLooper(player: player, templateItem: item)
                 for loopItem in player.items() { loopItem.preferredForwardBufferDuration = 1 }
             }
-            if active { player.playImmediately(atRate: 1) } else { player.pause() }
+            if active {
+                player.playImmediately(atRate: 1)
+                if displayLink == nil {
+                    let link = CADisplayLink(target: self, selector: #selector(sampleFrame(_:)))
+                    link.preferredFramesPerSecond = 12
+                    link.add(to: .main, forMode: .common)
+                    displayLink = link
+                }
+            } else { player.pause(); stopSampling() }
+        }
+
+        @objc private func sampleFrame(_ link: CADisplayLink) {
+            // AVPlayerLooper creates replica items. Attach to the item actually
+            // on screen, and reattach at each loop, not to the template item.
+            if outputItem !== player.currentItem {
+                detachOutput()
+                if let item = player.currentItem {
+                    let videoOutput = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                    ])
+                    videoOutput.suppressesPlayerRendering = false
+                    item.add(videoOutput)
+                    outputItem = item; output = videoOutput
+                }
+            }
+            guard playerLayer.isReadyForDisplay, let output else { return }
+            let time = output.itemTime(forHostTime: link.timestamp)
+            guard output.hasNewPixelBuffer(forItemTime: time),
+                  let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { return }
+            autoreleasepool {
+                let input = CIImage(cvPixelBuffer: buffer)
+                guard input.extent.width > 0, input.extent.height > 0 else { return }
+                let scale = min(1, 480 / max(input.extent.width, input.extent.height))
+                let small = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                guard let cg = frameContext.createCGImage(small, from: small.extent) else { return }
+                onFrame?(UIImage(cgImage: cg))
+            }
+        }
+
+        private func stopSampling() {
+            displayLink?.invalidate(); displayLink = nil
+        }
+
+        private func detachOutput() {
+            if let output, let outputItem { outputItem.remove(output) }
+            output = nil; outputItem = nil
         }
         func stop() {
+            stopSampling(); detachOutput(); onFrame = nil
             displayObserver?.invalidate(); displayObserver = nil
             player.pause(); looper?.disableLooping(); looper = nil; player.removeAllItems()
         }
     }
 
     func makeUIView(context: Context) -> ArtworkView { ArtworkView(frame: .zero) }
-    func updateUIView(_ view: ArtworkView, context: Context) { view.update(url: url, active: active) }
+    func updateUIView(_ view: ArtworkView, context: Context) { view.update(url: url, active: active, onFrame: onFrame) }
     static func dismantleUIView(_ view: ArtworkView, coordinator: ()) { view.stop() }
 }
 
 // A native analogue of Orchard's blurred-artwork warp, rather than palette blobs.
 struct MusicWarpedArtwork: UIViewRepresentable {
-    let image: UIImage
+    let frame: MusicBackdropFrame
     let active: Bool
 
     final class WarpView: UIView {
         private let context = CIContext(options: [.cacheIntermediates: false])
         private let renderBounds = CGRect(x: 0, y: 0, width: 480, height: 270)
         private var sourceImage: UIImage?
+        private var sourceID: UUID?
+        private var liveSource = false
+        private var transitionDuration = 1.2
         private var blurred: CIImage?
         private var transitionFrom: CIImage?
         private var transitionStart: CFTimeInterval?
@@ -337,14 +426,24 @@ struct MusicWarpedArtwork: UIViewRepresentable {
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        func update(image: UIImage, active: Bool) {
-            if sourceImage !== image {
-                let previous = active ? blendedSource(at: CACurrentMediaTime()) : nil
-                let frozen = previous.flatMap { context.createCGImage($0, from: renderBounds) }
-                sourceImage = image
-                prepare(image)
-                transitionFrom = frozen.map { CIImage(cgImage: $0).clampedToExtent() }
-                transitionStart = transitionFrom == nil ? nil : CACurrentMediaTime()
+        func update(frame: MusicBackdropFrame, active: Bool) {
+            if sourceImage !== frame.image {
+                let now = CACurrentMediaTime()
+                let sameLiveSource = frame.live && liveSource && sourceID == frame.sourceID
+                // Keep the entry fade running while its video target advances.
+                // Subsequent frames get a short blend instead of restarting a
+                // long cover transition and lagging behind the visible artwork.
+                let enteringVideo = sameLiveSource && transitionDuration > 0.2
+                    && transitionStart.map { now - $0 < transitionDuration } == true
+                if !enteringVideo {
+                    let previous = active ? blendedSource(at: now) : nil
+                    let frozen = previous.flatMap { context.createCGImage($0, from: renderBounds) }
+                    transitionFrom = frozen.map { CIImage(cgImage: $0).clampedToExtent() }
+                    transitionStart = transitionFrom == nil ? nil : now
+                    transitionDuration = sameLiveSource ? 0.12 : (frame.live ? 1.8 : 1.2)
+                }
+                sourceImage = frame.image; sourceID = frame.sourceID; liveSource = frame.live
+                prepare(frame.image)
                 render()
             }
             if active && displayLink == nil {
@@ -370,7 +469,7 @@ struct MusicWarpedArtwork: UIViewRepresentable {
                 .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 22])
                 .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.24])
                 .cropped(to: renderBounds)
-            // Bake the blur once per cover; only spatial distortion runs each frame.
+            // Bake the blur at the low-resolution sample cadence; distortion runs at 30 fps.
             blurred = context.createCGImage(softened, from: renderBounds).map { CIImage(cgImage: $0).clampedToExtent() }
         }
 
@@ -383,7 +482,7 @@ struct MusicWarpedArtwork: UIViewRepresentable {
         private func blendedSource(at time: CFTimeInterval) -> CIImage? {
             guard let blurred else { return nil }
             guard let previous = transitionFrom, let start = transitionStart else { return blurred }
-            let progress = min(1, max(0, (time - start) / 1.2))
+            let progress = min(1, max(0, (time - start) / transitionDuration))
             if progress >= 1 {
                 transitionFrom = nil; transitionStart = nil
                 return blurred
@@ -426,6 +525,6 @@ struct MusicWarpedArtwork: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WarpView { WarpView(frame: .zero) }
-    func updateUIView(_ view: WarpView, context: Context) { view.update(image: image, active: active) }
+    func updateUIView(_ view: WarpView, context: Context) { view.update(frame: frame, active: active) }
     static func dismantleUIView(_ view: WarpView, coordinator: ()) { view.stop() }
 }
