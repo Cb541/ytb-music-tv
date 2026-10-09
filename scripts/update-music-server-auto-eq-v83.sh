@@ -2,7 +2,7 @@
 set -euo pipefail
 # Installs song-adaptive Auto EQ plus Balanced, Immersive and Maximum Spatial Audio modes.
 # Keeps existing OAuth, preferences, cookies, playlists and server data.
-revision=994437afe901f26a933268d6d9f05f85f9d9df24
+revision=1dd5b94fd5fc517dec69c51a46665813c78f10d9
 repo=https://raw.githubusercontent.com/Cb541/ytb-music-tv/$revision
 container=$(docker ps -aq --filter label=com.docker.compose.service=ytb-music-tv-server | head -n 1)
 if [[ -z "$container" ]]; then
