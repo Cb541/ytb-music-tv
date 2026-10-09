@@ -251,7 +251,7 @@ struct MusicPlayerScreen: View {
                 // reach Lyrics/Queue/Crossfade instead of the seek slider.
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    HStack(spacing: 6) {
+                    HStack(spacing: 3) {
                     control("quote.bubble", label: "Lyrics", selected: lyricsVisible, uniformBackground: true, compact: true, boxless: true) { lyricsVisible.toggle() }
                     control("list.bullet", label: "Queue", compact: true, boxless: true) { showingQueue = true }
                     Menu {
@@ -284,7 +284,7 @@ struct MusicPlayerScreen: View {
                     .accessibilityLabel("Audio effects and crossfade")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
-                    .padding(.trailing, -70)
+                    .padding(.trailing, -55)
                     .offset(y: 31)
                 }
                 .focusSection()
