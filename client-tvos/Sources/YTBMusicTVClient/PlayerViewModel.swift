@@ -102,7 +102,12 @@ final class PlayerViewModel: ObservableObject {
             currentStreamHasVideo = spatialOriginalHasVideo
             fallbackPlaybackURLs = []
             replacePlayerItem(url: normal)
-            Task { await player.seek(to: resumeTime) }
+            let originalPlayer = player
+            let originalItem = originalPlayer.currentItem
+            Task { @MainActor in
+                guard originalPlayer.currentItem === originalItem else { return }
+                await originalPlayer.seek(to: resumeTime)
+            }
         }
         if !enabled && previous == "off" { return }
         spatialSwitchGeneration = UUID()
@@ -144,7 +149,12 @@ final class PlayerViewModel: ObservableObject {
                 self.currentAudioBitrate = 256_000
                 self.fallbackPlaybackURLs = [self.spatialOriginalURL!]
                 self.replacePlayerItem(url: url)
-                await self.player.seek(to: resumeTime)
+                let spatialPlayer = self.player
+                let spatialItem = spatialPlayer.currentItem
+                if spatialItem != nil { await spatialPlayer.seek(to: resumeTime) }
+                guard self.spatialSwitchGeneration == generation,
+                      self.player === spatialPlayer,
+                      self.player.currentItem === spatialItem else { return }
                 self.invalidateNextPlaybackCache()
                 self.scheduleNextPlaybackPrecache()
             } catch {
@@ -169,7 +179,12 @@ final class PlayerViewModel: ObservableObject {
         currentStreamHasVideo = spatialOriginalHasVideo
         fallbackPlaybackURLs = []
         replacePlayerItem(url: normal)
-        Task { await player.seek(to: resume) }
+        let originalPlayer = player
+        let originalItem = originalPlayer.currentItem
+        Task { @MainActor in
+            guard originalPlayer.currentItem === originalItem else { return }
+            await originalPlayer.seek(to: resume)
+        }
         errorMessage = "The processed stream was unavailable. Normal audio has been restored."
         return true
     }
@@ -732,12 +747,21 @@ final class PlayerViewModel: ObservableObject {
             updateStatus("ended")
             return
         }
-        _ = await startPlayback(
+        let started = await startPlayback(
             nextItem,
             replacingQueue: nil,
             recordHistory: true,
             prefetched: cachedPrefetchedPlayback(for: nextItem)
         )
+        // The AVURLAsset backing a prefetched item can carry an HLS seek
+        // position. A manual Next must begin at the start, never inherit the
+        // previous song's resume time or a prefetched playback offset.
+        if started, self.state?.currentMediaId == nextItem.id,
+           let newItem = player.currentItem {
+            await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard player.currentItem === newItem else { return }
+            playbackTimeMs = 0
+        }
     }
 
     func previous() async {
