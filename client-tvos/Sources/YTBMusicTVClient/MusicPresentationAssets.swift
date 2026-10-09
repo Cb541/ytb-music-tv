@@ -13,8 +13,10 @@ final class MusicPresentationAssets: ObservableObject {
     @Published var motionURL: URL?
     @Published var backgroundVeil = 0.34
     @Published var colors: [Color] = [.black, .gray.opacity(0.15), .black]
-    var accentColor: Color {
-        let base = UIColor(colors.first ?? .indigo)
+    var accentColor: Color { Self.readableAccent(colors.first ?? .indigo) }
+
+    private static func readableAccent(_ color: Color) -> Color {
+        let base = UIColor(color)
         var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
         guard base.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else { return .white }
         return Color(uiColor: UIColor(hue: hue, saturation: min(saturation, 0.75), brightness: max(brightness, 0.85), alpha: 1))
@@ -25,6 +27,7 @@ final class MusicPresentationAssets: ObservableObject {
     var artworkGeneration: UUID { backdropState.generation }
     private var generation: UUID { backdropState.generation }
     private var lastVeilTime = 0.0
+    private var lastAccentTime = 0.0
     private var currentStillSource: StillCoverSource?
     private final class CachedCover: NSObject {
         let cover: ValidatedStillCover
@@ -38,7 +41,7 @@ final class MusicPresentationAssets: ObservableObject {
     }()
 
     func load(_ media: MediaItem?, animated: Bool, albumCover: @escaping @MainActor @Sendable (MediaItem) async -> URL? = { _ in nil }) async {
-        let token = backdropState.begin(); currentStillSource = nil; lastVeilTime = 0
+        let token = backdropState.begin(); currentStillSource = nil; lastVeilTime = 0; lastAccentTime = 0
         lyrics = MusicLyrics(); motionURL = nil; artworkImage = nil
         // Keep the previous backdrop until a new cover arrives; clearing it
         // would expose a colored fallback during every song transition.
@@ -177,9 +180,9 @@ final class MusicPresentationAssets: ObservableObject {
         artworkImage = image
         if backdropState.acceptsStill(token) {
             backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: false)
+            colors = Self.palette(image)
+            backgroundVeil = Self.balancedVeil(image)
         }
-        colors = Self.palette(image)
-        if backdropState.acceptsStill(token) { backgroundVeil = Self.balancedVeil(image) }
         return true
     }
 
@@ -188,6 +191,7 @@ final class MusicPresentationAssets: ObservableObject {
         backdrop.frame = MusicBackdropFrame(image: image, sourceID: token, live: true)
         // Follow major brightness changes slowly, without making the veil pulse.
         let now = CACurrentMediaTime()
+        updateMotionAccent(image, at: now)
         if now - lastVeilTime >= 0.5 {
             lastVeilTime = now
             let target = Self.balancedVeil(image)
@@ -195,6 +199,29 @@ final class MusicPresentationAssets: ObservableObject {
                 backgroundVeil += min(0.03, max(-0.03, target - backgroundVeil))
             }
         }
+    }
+
+    private func updateMotionAccent(_ image: UIImage, at time: CFTimeInterval) {
+        // Reuse the displayed video's samples, but keep palette work and UI
+        // changes below three per second. Color fades do not alter focus timing.
+        guard time - lastAccentTime >= 0.4 else { return }
+        lastAccentTime = time
+        let sampled = Self.palette(image)
+        guard let first = sampled.first else { return }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        UIColor(first).getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        // A brief black frame/loop seam has no meaningful new accent. Retain
+        // the last color instead of flashing white during the video's fade.
+        guard saturation >= 0.08 || brightness > 0.23 else { return }
+        var oldR: CGFloat = 0, oldG: CGFloat = 0, oldB: CGFloat = 0
+        var newR: CGFloat = 0, newG: CGFloat = 0, newB: CGFloat = 0
+        UIColor(accentColor).getRed(&oldR, green: &oldG, blue: &oldB, alpha: &alpha)
+        UIColor(Self.readableAccent(first)).getRed(&newR, green: &newG, blue: &newB, alpha: &alpha)
+        let dr = newR - oldR, dg = newG - oldG, db = newB - oldB
+        guard dr * dr + dg * dg + db * db > 0.0009 else { return }
+        // All existing controls, the progress fill and lyric glow share this
+        // Artwork accent, so they continue to match each other as it changes.
+        withAnimation(.easeInOut(duration: 0.6)) { colors = sampled }
     }
 
     static func balancedVeil(_ image: UIImage) -> Double {
