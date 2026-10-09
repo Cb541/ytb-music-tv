@@ -27,7 +27,7 @@ function measureBand(source, filter) {
     child.on('error', () => { clearTimeout(timeout); resolve(null); });
     child.on('close', (exitCode) => {
       clearTimeout(timeout);
-      const match = output.match(/mean_volume:\\s*(-?\\d+(?:\\.\\d+)?) dB/);
+      const match = output.match(/mean_volume:\s*(-?\d+(?:\.\d+)?) dB/);
       resolve(exitCode === 0 && match ? Number(match[1]) : null);
     });
   });
