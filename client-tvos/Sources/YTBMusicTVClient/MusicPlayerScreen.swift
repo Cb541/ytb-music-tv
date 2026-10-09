@@ -20,6 +20,9 @@ struct MusicPlayerScreen: View {
     @FocusState private var focusedQueueID: String?
     @State private var videoVisible = false
     @State private var scrubbing = false
+    @State private var seekBarFocusEnabled = false
+    @State private var seekBarFocusRequest = 0
+    @State private var lastControlBeforeSeeking = "PlayPause"
     @FocusState private var focusedControl: String?
     @State private var controlHighlightVisible = true
     @AppStorage("YTBMusicTV.playerControlsVisible") private var controlsVisible = true
@@ -139,6 +142,9 @@ struct MusicPlayerScreen: View {
         .onAppear { viewModel.setSpatialAudioEnabled(spatialAudioEnabled); focusedControl = controlsVisible ? "PlayPause" : "Artist"; noteControlActivity() }
         .onChange(of: focusedControl) { if focusedControl != nil { noteControlActivity() } }
         .onChange(of: scrubbing) { noteControlActivity() }
+        .onChange(of: controlsVisible) {
+            if !controlsVisible { seekBarFocusEnabled = false }
+        }
         .onChange(of: showingQueue) { noteControlActivity() }
         .onChange(of: viewModel.isPreparingPlayback) { noteControlActivity() }
         .onChange(of: viewModel.state?.status) { noteControlActivity() }
@@ -228,6 +234,7 @@ struct MusicPlayerScreen: View {
                         highlighted: controlHighlightVisible && focusedControl == "PlayPause", isVisible: controlsVisible, showsBackground: false, horizontalPadding: 4))
                     .foregroundStyle(assets.accentColor)
                     .focusEffectDisabled().focused($focusedControl, equals: "PlayPause")
+                    .onMoveCommand { moveControl(from: "PlayPause", direction: $0) }
                     .accessibilityLabel(viewModel.state?.status == "playing" ? "Pause" : "Play")
                     .disabled(scrubbing)
                     control("forward.end.fill", label: "Next", boxless: true) { Task { await viewModel.next() } }
@@ -272,6 +279,7 @@ struct MusicPlayerScreen: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .scaleEffect(0.88)
                     .focusEffectDisabled().focused($focusedControl, equals: "Crossfade")
+                    .onMoveCommand { moveControl(from: "Crossfade", direction: $0) }
                     .accessibilityLabel("Audio effects and crossfade")
                     .accessibilityValue(crossfadeSeconds == 0 ? "Off" : "\(Int(crossfadeSeconds)) seconds")
                 }
@@ -281,7 +289,12 @@ struct MusicPlayerScreen: View {
                 .focusSection()
             }
             PlayerProgressStrip(progress: viewModel.playbackProgress, l10n: l10n, scrubbing: $scrubbing,
-                                onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor, showsBackground: false, visualsVisible: controlsVisible)
+                                onActivity: noteControlActivity, seek: viewModel.seek, accentColor: assets.accentColor,
+                                showsBackground: false, visualsVisible: controlsVisible,
+                                acceptsFocus: seekBarFocusEnabled && controlsVisible,
+                                focusRequestRevision: seekBarFocusRequest,
+                                onMoveUp: returnToPlayerControls,
+                                onFocusLost: leaveSeekBar)
                 .padding(.horizontal, -60)
         }
     }
@@ -304,9 +317,47 @@ struct MusicPlayerScreen: View {
             backgroundOpacity: selected && !uniformBackground ? 0.20 : 0.08, showsBackground: !boxless, horizontalPadding: compact ? 0 : 4))
         .scaleEffect(compact ? 0.88 : 1)
         .focusEffectDisabled().focused($focusedControl, equals: label)
+        .onMoveCommand { moveControl(from: label, direction: $0) }
         .foregroundStyle(assets.accentColor)
         .accessibilityLabel(label)
         .accessibilityValue(selected ? "On" : "Off")
+    }
+
+    // Horizontal movement is deliberately limited to the transport row. The
+    // seek bar is not a focus candidate at all until an explicit Down gesture.
+    private func moveControl(from source: String, direction: MoveCommandDirection) {
+        noteControlActivity()
+        guard controlsVisible, !scrubbing, !showingQueue else { return }
+
+        let order = ["Shuffle", "Previous", "PlayPause", "Next", "Repeat song", "Lyrics", "Queue", "Crossfade"]
+        guard let index = order.firstIndex(of: source) else { return }
+        switch direction {
+        case .left:
+            if index > 0 { focusedControl = order[index - 1] }
+        case .right:
+            if index + 1 < order.count { focusedControl = order[index + 1] }
+        case .down:
+            guard viewModel.playbackProgress.durationMs > 0 else { return }
+            lastControlBeforeSeeking = source
+            seekBarFocusEnabled = true
+            seekBarFocusRequest &+= 1
+        default:
+            break
+        }
+    }
+
+    private func returnToPlayerControls() {
+        seekBarFocusEnabled = false
+        focusedControl = lastControlBeforeSeeking
+        noteControlActivity()
+    }
+
+    private func leaveSeekBar() {
+        seekBarFocusEnabled = false
+        if controlsVisible && !showingQueue {
+            focusedControl = lastControlBeforeSeeking
+        }
+        noteControlActivity()
     }
 
     private func openRelated(_ kind: String) {
