@@ -17,12 +17,14 @@ const STEREO_FILTER = 'aformat=channel_layouts=stereo,stereotools=slev=1.30:mlev
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const cleanExpired = async () => {
-  for (const [key, job] of active) {
-    if (Date.now() - job.accessed < IDLE_MS) continue;
+  for (const [key, entry] of active) {
+    if (Date.now() - entry.accessed < IDLE_MS) continue;
+    active.delete(key);
+    const job = await entry.promise.catch(() => null);
+    if (!job) continue;
     if (job.process && job.process.exitCode === null) {
       job.process.kill('SIGTERM');
     }
-    active.delete(key);
     await rm(job.directory, { recursive: true, force: true }).catch(() => {});
   }
 };
@@ -97,20 +99,22 @@ async function getJob(videoId, youtubeService) {
     throw error;
   }
   await cleanExpired();
-  let task = active.get(videoId);
-  if (!task) {
+  let entry = active.get(videoId);
+  if (!entry) {
     if (active.size >= MAX_JOBS) {
       const error = new Error('Spatial stream processor is busy; normal audio remains available');
       error.status = 503;
       throw error;
     }
-    task = initialize(videoId, youtubeService).catch((error) => {
+    const promise = initialize(videoId, youtubeService).catch((error) => {
       active.delete(videoId);
       throw error;
     });
-    active.set(videoId, task);
+    entry = { promise, accessed: Date.now() };
+    active.set(videoId, entry);
   }
-  const job = await task;
+  entry.accessed = Date.now();
+  const job = await entry.promise;
   job.accessed = Date.now();
   return job;
 }
