@@ -211,6 +211,19 @@ enum PlaybackAndLyricsTests {
         precondition(providerOrder == ["artwork.boidu.dev", "apple-music-artwork.nopxx.site", "artwork.m8tec.top"])
         let multipleReleases = Data(#"{"results":[{"trackName":"rockstar (feat. 21 Savage)","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"beerbongs & bentleys","collectionId":1,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"The Diamond Collection","collectionId":2,"trackTimeMillis":218146},{"trackName":"rockstar (Live)","artistName":"Post Malone","collectionName":"Live","collectionId":3,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Other Artist","collectionName":"Other","collectionId":4,"trackTimeMillis":218146},{"trackName":"rockstar","artistName":"Post Malone","collectionName":"Wrong recording length","collectionId":5,"trackTimeMillis":418146}]}"#.utf8)
         precondition(MusicLookup.artworkTitle("Last Thing You Need (from GTAVI: The Album)") == "Last Thing You Need")
+
+        // GTA VI standalone singles may use inconsistent bracketed soundtrack tags and
+        // full multi-artist credits across YouTube Music, iTunes and motion artwork APIs.
+        let flowerTitle = "Flower In A Hurricane [from GTAVI] (feat. King Gizzard & the Lizard Wizard)"
+        precondition(MusicLookup.artworkTitle(flowerTitle) == "Flower In A Hurricane")
+        precondition(MusicLookup.artworkTitle("Flower In A Hurricane (feat. Tame Impala, SZA, King Gizzard & The Lizard Wizard) [from GTAVI]") == "Flower In A Hurricane")
+        let playerSingle = "Flower In A Hurricane (feat. Tame Impala, SZA, King Gizzard & The Lizard Wizard) [from GTAVI]"
+        precondition(MusicLookup.albumKey(playerSingle) == MusicLookup.albumKey("Flower In A Hurricane [from GTAVI] - Single"))
+        precondition(MusicLookup.albumKey("Flower In A Hurricane (Live)") != MusicLookup.albumKey(playerSingle))
+        let flowerMotion = Data(#"{"results":[{"track":"Flower In A Hurricane [from GTAVI]","artist":"Justice, Tame Impala, SZA, King Gizzard & The Lizard Wizard","album":"Flower In A Hurricane [from GTAVI] - Single","animation":{"best":"https://mvod.itunes.apple.com/flower.mp4"}}]}"#.utf8)
+        precondition(MusicLookup.artworkResult(flowerMotion, title: flowerTitle, artist: "Justice, Tame Impala, SZA, Grand Theft Auto VI", album: playerSingle, fallback: nil)?.motion?.lastPathComponent == "flower.mp4")
+        let flowerCatalog = Data(#"{"results":[{"trackName":"Flower In A Hurricane [from GTAVI]","artistName":"Justice, Tame Impala, SZA, King Gizzard & The Lizard Wizard","collectionName":"Flower In A Hurricane [from GTAVI] - Single","collectionId":6819802963,"trackTimeMillis":225000}]}"#.utf8)
+        precondition(MusicLookup.catalogAlbums(flowerCatalog, title: flowerTitle, artist: "Justice", album: playerSingle, durationMs: 225000).map(\.id) == ["6819802963"])
         precondition(MusicLookup.artworkTitle("Song (Live)") == "Song (Live)")
         let soundtrack = Data(#"{"results":[{"trackName":"Last Thing You Need","artistName":"Morgan Wallen","collectionName":"Grand Theft Auto VI: The Album","collectionId":6812476961,"trackTimeMillis":196000}]}"#.utf8)
         precondition(MusicLookup.catalogAlbums(soundtrack, title: "Last Thing You Need (from GTAVI: The Album)", artist: "Morgan Wallen, Grand Theft Auto VI", album: "Last Thing You Need (from GTAVI: The Album) - Single", durationMs: 196000).count == 1)
