@@ -46,6 +46,33 @@ jobs:
           xcrun --sdk appletvos --show-sdk-version
       - name: Test playback decoding and lyric timing
         run: bash client-tvos/test-models.sh
+      - name: Diagnose live boidu artwork responses (no credentials)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,subprocess,urllib.parse
+          root='https://artwork.boidu.dev/'
+          queries=[
+              {'id':'6819802963'},
+              {'url':'https://music.apple.com/us/album/flower-in-a-hurricane-from-gtavi-single/6819802963'},
+              {'s':'Flower In A Hurricane (feat. Tame Impala, SZA, King Gizzard & the Lizard Wizard) [from GTAVI]','a':'Justice, Tame Impala, SZA, Grand Theft Auto VI'},
+              {'s':'Flower In A Hurricane [from GTAVI] (feat. King Gizzard & the Lizard Wizard)','a':'Justice, Tame Impala, SZA'},
+              {'s':'Flower In A Hurricane','a':'Justice'},
+              {'s':'Flower In A Hurricane','a':'Justice, Tame Impala, SZA'},
+          ]
+          for i, params in enumerate(queries):
+              url=root+'?'+urllib.parse.urlencode(params)
+              try:
+                  proc=subprocess.run(['curl','--location','--silent','--show-error','--compressed','--max-time','17','--write-out','\\nHTTP_STATUS:%{http_code}','--url',url],capture_output=True,text=True,timeout=20)
+                  body,sep,code=proc.stdout.rpartition('\\nHTTP_STATUS:')
+                  try:
+                      d=json.loads(body)
+                      if isinstance(d,dict):
+                          d={k:(v[:240] if isinstance(v,str) else v) for k,v in d.items() if k in ('name','artist','albumId','animated','animatedVertical','videoUrl','videoUrlVertical','error')}
+                      print('PROBE',i,'params',json.dumps(params),'http',code,'response',json.dumps(d),'curlerr',proc.stderr[:120],flush=True)
+                  except ValueError: print('PROBE',i,'http',code,'body',body[:200],'curlerr',proc.stderr[:120],flush=True)
+              except Exception as ex: print('PROBE',i,'exception',str(ex)[:140],flush=True)
+          PY
       - name: Build unsigned Apple TV IPA
         working-directory: client-tvos
         env:
