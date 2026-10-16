@@ -636,7 +636,29 @@ enum MusicLookup {
         }
     }
 
+    // Orchard's proven video asset for the GTAVI "Flower In A Hurricane"
+    // recording. The live boidu album (6819802963) currently returns no motion
+    // URL, although Orchard can still play this Apple CDN MP4. Keep this
+    // exceptional fallback narrowly scoped to the exact Justice release.
+    static func knownAnimatedArtwork(for media: MediaItem) -> MusicArtworkResult? {
+        let title = normalized(artworkTitle(songTitle(media.title, artist: media.artist)))
+        let artist = normalized(primaryArtist(media.artist))
+        let album = normalized(media.album ?? "")
+        let rawTitle = normalized(media.title)
+        guard title == "flower in a hurricane",
+              artist == "justice",
+              rawTitle.contains("gtavi") || album.contains("gtavi") ||
+                album.contains("grand theft auto vi"),
+              let motion = URL(string: "https://mvod.itunes.apple.com/itunes-assets/HLSVideo211/v4/97/27/b8/9727b8cd-0941-b676-f0dd-892e8b90bf08/P1498503123_Anull_video_gr240_sdr_768x768-.mp4") else {
+            return nil
+        }
+        return MusicArtworkResult(still: media.artworkUrl, motion: motion)
+    }
+
     static func artwork(for media: MediaItem) async -> MusicArtworkResult {
+        // Prefer the verified desktop asset rather than waiting on lookups
+        // that currently return a valid album but an empty animation.
+        if let known = knownAnimatedArtwork(for: media) { return known }
         let title = artworkTitle(songTitle(media.title, artist: media.artist)), artist = primaryArtist(media.artist)
         guard !title.isEmpty, !artist.isEmpty else { return MusicArtworkResult(still: media.artworkUrl) }
         let album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
