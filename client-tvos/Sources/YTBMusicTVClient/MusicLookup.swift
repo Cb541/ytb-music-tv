@@ -81,7 +81,7 @@ enum MusicLookup {
     // those credits for cover matching; live/remix/version labels still matter.
     static func artworkTitle(_ value: String) -> String {
         cleaned(value)
-            .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*from\s+[^\)\]]+(?:album|soundtrack)[\)\]]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*from\s+[^\)\]]+[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]+[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s+(?:feat\.?|ft\.?|featuring)\s+[^\(\[]+$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -278,7 +278,7 @@ enum MusicLookup {
     }
 
     static func albumKey(_ value: String) -> String {
-        let base = cleaned(value)
+        let base = artworkTitle(cleaned(value))
             .replacingOccurrences(of: #"(?i)\s*[\(\[][^\)\]]*(deluxe|expanded|remaster|anniversary|edition)[^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\s*-\s*(deluxe|expanded|remaster|anniversary).*"#, with: "", options: .regularExpression)
         let release = base.replacingOccurrences(of: #"(?i)\s*(?:[-–—]\s*|\(\s*)(?:EP|Single)\)?\s*$"#, with: "", options: .regularExpression)
