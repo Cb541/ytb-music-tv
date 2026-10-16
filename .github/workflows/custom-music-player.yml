@@ -46,7 +46,7 @@ jobs:
           xcrun --sdk appletvos --show-sdk-version
       - name: Test playback decoding and lyric timing
         run: bash client-tvos/test-models.sh
-      - name: Diagnose live boidu artwork responses (no credentials)
+      - name: Diagnose live boidu artwork responses (public metadata only)
         shell: bash
         run: |
           python3 - <<'PY'
