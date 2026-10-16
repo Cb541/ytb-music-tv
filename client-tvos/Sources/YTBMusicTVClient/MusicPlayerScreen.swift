@@ -14,6 +14,8 @@ struct MusicPlayerScreen: View {
     @AppStorage("YTBMusicTV.musicLyricsVisible") private var lyricsVisible = false
     @AppStorage("YTBMusicTV.motionArtwork") private var motionArtwork = true
     @AppStorage("YTBMusicTV.crossfadeSeconds") private var crossfadeSeconds = 5.0
+    // Only album artwork and its song title scale; the player controls do not.
+    @AppStorage("YTBMusicTV.artworkTitleScale") private var artworkTitleScale = 1.0
     @AppStorage("YTBMusicTV.spatialAudioProfile") private var spatialAudioProfile = "off"
     @AppStorage("YTBMusicTV.autoEQEnabled") private var autoEQEnabled = false
     @State private var showingQueue = false
@@ -33,6 +35,28 @@ struct MusicPlayerScreen: View {
     private var musicVideoActive: Bool { videoVisible && viewModel.currentStreamHasVideo }
     private var lookupID: String { (viewModel.state?.currentMedia?.videoId ?? viewModel.state?.currentMediaId ?? "") + (motionArtwork ? ":motion" : ":still") }
 
+    private var compactPlayerHeading: String {
+        guard let media = displayedMedia else { return "" }
+        let parts = MusicLookup.playerHeading(media).components(separatedBy: " • ")
+        if parts.count == 2 {
+            return "\(shortenPlayerHeading(parts[0], limit: 32)) • \(shortenPlayerHeading(parts[1], limit: 34))"
+        }
+        return shortenPlayerHeading(MusicLookup.playerHeading(media), limit: 56)
+    }
+
+    private func shortenPlayerHeading(_ text: String, limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        let prefix = String(trimmed.prefix(limit - 1))
+        if let space = prefix.lastIndex(of: " "),
+           prefix.distance(from: prefix.startIndex, to: space) >= limit / 2 {
+            return String(prefix[..<space]) + "…"
+        }
+        return prefix + "…"
+    }
+
+    private var artworkTitleSize: CGFloat { CGFloat(min(1.4, max(0.8, artworkTitleScale))) }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -46,6 +70,19 @@ struct MusicPlayerScreen: View {
                     Menu {
                         Button("View artist") { openRelated("artist") }
                         Button("View album") { openRelated("album") }
+                        Menu {
+                            ForEach([0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4], id: \.self) { scale in
+                                Button {
+                                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+                                        artworkTitleScale = scale
+                                    }
+                                } label: {
+                                    Label("\(Int((scale * 100).rounded()))%", systemImage: abs(artworkTitleScale - scale) < 0.001 ? "checkmark.circle.fill" : "circle")
+                                }
+                            }
+                        } label: {
+                            Label("Artwork & title scale (\(Int((artworkTitleScale * 100).rounded()))%)", systemImage: "magnifyingglass")
+                        }
                         Button {
                             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { controlsVisible.toggle() }
                             focusedControl = "Artist"
@@ -73,10 +110,13 @@ struct MusicPlayerScreen: View {
                         .accessibilityValue(viewModel.isMixActive ? "On" : "Off")
                         .accessibilityHint("Find similar songs for the current song")
                     } label: {
-                        Text(displayedMedia.map { MusicLookup.playerHeading($0) } ?? "")
+                        Text(compactPlayerHeading)
                             .font(.system(size: 26, weight: .medium))
                             .foregroundStyle(.white.opacity(0.75))
                             .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: min(geometry.size.width * 0.44, 540), alignment: .leading)
+                            .accessibilityLabel(displayedMedia.map { MusicLookup.playerHeading($0) } ?? "")
                             .shadow(color: assets.accentColor.opacity(controlHighlightVisible && focusedControl == "Artist" ? 0.9 : 0), radius: 8)
                     }
                     .buttonStyle(RemoteButtonStyle())
@@ -86,11 +126,12 @@ struct MusicPlayerScreen: View {
                     .offset(y: -5)
                     .disabled(displayedMedia == nil || viewModel.isSearching)
                     GeometryReader { stage in
-                        let coverSide = lyricsVisible
+                        let baseCoverSide = lyricsVisible
                             ? min(geometry.size.height * 0.53, geometry.size.width * 0.36, max(1, stage.size.height - 145))
                             : min(geometry.size.height * 0.61, geometry.size.width * 0.44, max(1, stage.size.height - 145))
+                        let coverSide = baseCoverSide * artworkTitleSize
                         HStack(alignment: .center, spacing: 80) {
-                            VStack(alignment: lyricsVisible ? .leading : .center, spacing: 34) {
+                            VStack(alignment: lyricsVisible ? .leading : .center, spacing: 34 * artworkTitleSize) {
                                 if musicVideoActive {
                                     Spacer(minLength: 0)
                                 } else {
@@ -211,7 +252,7 @@ struct MusicPlayerScreen: View {
     private var trackDetails: some View {
         VStack(alignment: lyricsVisible ? .leading : .center, spacing: 8) {
             Text(displayedMedia.map { MusicLookup.songTitle($0.title, artist: $0.artist) } ?? "Choose a song")
-                .font(.system(size: lyricsVisible ? 32 : 34, weight: .medium))
+                .font(.system(size: (lyricsVisible ? 32 : 34) * artworkTitleSize, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(2)
                 .frame(maxWidth: lyricsVisible ? nil : .infinity, alignment: lyricsVisible ? .leading : .center)
