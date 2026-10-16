@@ -300,9 +300,13 @@ enum MusicLookup {
             guard let foundArtist, normalized(primaryArtist(foundArtist)) == normalized(primaryArtist(artist)) else { continue }
             let foundTitle = object["track"] as? String ?? object["trackName"] as? String ?? object["name"] as? String
             let foundAlbum = object["album"] as? String ?? object["collectionName"] as? String
+            // boidu returns the track name on search, but the album name for
+            // direct album lookups. A single can share the song title while
+            // the player reports its album as "GTAVI" or another compilation.
             let albumNamedResponse = object["track"] == nil && object["trackName"] == nil &&
-                album != nil && albumKey(foundTitle ?? "") == albumKey(album ?? "") &&
-                (object["albumId"] != nil || object["collectionId"] != nil)
+                (object["albumId"] != nil || object["collectionId"] != nil) &&
+                (album.map { albumKey(foundTitle ?? "") == albumKey($0) } == true ||
+                 albumKey(foundTitle ?? "") == albumKey(title))
             if let foundTitle, !foundTitle.isEmpty, normalized(artworkTitle(foundTitle)) != normalized(artworkTitle(title)), !albumNamedResponse { continue }
             if foundTitle == nil && foundAlbum == nil { continue }
             if foundTitle == nil, let album, !album.isEmpty, let foundAlbum,
@@ -471,6 +475,26 @@ enum MusicLookup {
         }
     }
 
+    // Orchard desktop asks boidu only for ?s=<original title>&a=<artist>.
+    // The normal tvOS request also includes album and duration, which affect
+    // boidu's catalog match scoring. Try desktop-style requests as alternatives
+    // without weakening the recording/artist validation of the response.
+    static func desktopBioduRequests(for media: MediaItem) -> [URL] {
+        let originalTitle = cleaned(songTitle(media.title, artist: media.artist))
+        let originalArtist = cleaned(media.artist)
+        let normalizedTitle = artworkTitle(originalTitle)
+        let leadArtist = primaryArtist(originalArtist)
+        var requests: [URL] = []
+        var seen = Set<String>()
+        for (title, artist) in [(originalTitle, originalArtist), (normalizedTitle, leadArtist)] {
+            guard !title.isEmpty, !artist.isEmpty,
+                  let url = query("https://artwork.boidu.dev/", ["s": title, "a": artist]),
+                  seen.insert(url.absoluteString).inserted else { continue }
+            requests.append(url)
+        }
+        return requests
+    }
+
     static func artworkRequests(title: String, artist: String, album: String?, durationMs: Int, includeCatalog: Bool = true) -> [URL] {
         var requests: [URL] = []
         var boidu = ["s": title, "a": artist]
@@ -618,9 +642,18 @@ enum MusicLookup {
         let album = media.album.map(cleaned).flatMap { $0.isEmpty ? nil : $0 }
         let durationMs = media.durationMs, fallback = media.artworkUrl
         let direct = artworkRequests(title: title, artist: artist, album: album, durationMs: durationMs)
+        let desktopParity = desktopBioduRequests(for: media)
         let result: MusicArtworkResult? = await withTaskGroup(of: MusicArtworkResult?.self) { group in
             group.addTask {
                 await firstArtwork(from: direct, title: title, artist: artist, album: album, fallback: fallback)
+            }
+            group.addTask {
+                // A small stagger avoids extra requests for most songs when the
+                // existing providers succeed quickly; keeps the desktop lookup
+                // available for songs with inconsistent album metadata.
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return nil }
+                return await firstArtwork(from: desktopParity, title: title, artist: artist, album: album, fallback: fallback)
             }
             for (index, country) in ["us", "gb", "ca", "au"].enumerated() {
                 group.addTask {
