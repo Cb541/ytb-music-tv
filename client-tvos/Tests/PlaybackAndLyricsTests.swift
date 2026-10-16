@@ -224,6 +224,25 @@ enum PlaybackAndLyricsTests {
         precondition(MusicLookup.artworkResult(flowerMotion, title: flowerTitle, artist: "Justice, Tame Impala, SZA, Grand Theft Auto VI", album: playerSingle, fallback: nil)?.motion?.lastPathComponent == "flower.mp4")
         let flowerCatalog = Data(#"{"results":[{"trackName":"Flower In A Hurricane [from GTAVI]","artistName":"Justice, Tame Impala, SZA, King Gizzard & The Lizard Wizard","collectionName":"Flower In A Hurricane [from GTAVI] - Single","collectionId":6819802963,"trackTimeMillis":225000}]}"#.utf8)
         precondition(MusicLookup.catalogAlbums(flowerCatalog, title: flowerTitle, artist: "Justice", album: playerSingle, durationMs: 225000).map(\.id) == ["6819802963"])
+
+        // boidu's original Orchard desktop request uses only s/a; extra
+        // duration and album hints can alter catalog match ranking.
+        let flowerMedia = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"flower","videoId":"flower","type":"song","title":"Flower In A Hurricane [from GTAVI] (feat. King Gizzard & the Lizard Wizard)","artist":"Justice, Tame Impala, SZA","album":"Grand Theft Auto VI: The Album","durationMs":225000}"#.utf8))
+        let desktopBiodu = MusicLookup.desktopBioduRequests(for: flowerMedia)
+        precondition(desktopBiodu.count == 2)
+        let firstQuery = URLComponents(url: desktopBiodu[0], resolvingAgainstBaseURL: false)?.queryItems ?? []
+        precondition(firstQuery.first(where: { $0.name == "s" })?.value == flowerTitle)
+        precondition(firstQuery.first(where: { $0.name == "a" })?.value == "Justice, Tame Impala, SZA")
+        precondition(!firstQuery.contains(where: { ["al", "d", "albumName", "duration"].contains($0.name) }))
+        let secondQuery = URLComponents(url: desktopBiodu[1], resolvingAgainstBaseURL: false)?.queryItems ?? []
+        precondition(secondQuery.first(where: { $0.name == "s" })?.value == "Flower In A Hurricane")
+        precondition(secondQuery.first(where: { $0.name == "a" })?.value == "Justice")
+        // Search-by-song boidu replies have a track title, while an ID lookup
+        // may return the single's album name in the "name" field.
+        let albumNamedBiodu = Data(#"{"name":"Flower In A Hurricane [from GTAVI] - Single","artist":"Justice, Tame Impala, SZA","albumId":"6819802963","videoUrl":"https://mvod.itunes.apple.com/flower-single.mp4"}"#.utf8)
+        precondition(MusicLookup.artworkResult(albumNamedBiodu, title: flowerTitle, artist: "Justice", album: "Grand Theft Auto VI: The Album", fallback: nil)?.motion?.lastPathComponent == "flower-single.mp4")
+        let unrelatedSingle = Data(#"{"name":"Different Song [from GTAVI] - Single","artist":"Justice","albumId":"6819802964","videoUrl":"https://mvod.itunes.apple.com/wrong.mp4"}"#.utf8)
+        precondition(MusicLookup.artworkResult(unrelatedSingle, title: flowerTitle, artist: "Justice", album: "Grand Theft Auto VI: The Album", fallback: nil) == nil)
         precondition(MusicLookup.artworkTitle("Song (Live)") == "Song (Live)")
         let soundtrack = Data(#"{"results":[{"trackName":"Last Thing You Need","artistName":"Morgan Wallen","collectionName":"Grand Theft Auto VI: The Album","collectionId":6812476961,"trackTimeMillis":196000}]}"#.utf8)
         precondition(MusicLookup.catalogAlbums(soundtrack, title: "Last Thing You Need (from GTAVI: The Album)", artist: "Morgan Wallen, Grand Theft Auto VI", album: "Last Thing You Need (from GTAVI: The Album) - Single", durationMs: 196000).count == 1)
