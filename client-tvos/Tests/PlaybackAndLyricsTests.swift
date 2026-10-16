@@ -234,6 +234,12 @@ enum PlaybackAndLyricsTests {
         precondition(firstQuery.first(where: { $0.name == "s" })?.value == flowerTitle)
         precondition(firstQuery.first(where: { $0.name == "a" })?.value == "Justice, Tame Impala, SZA")
         precondition(!firstQuery.contains(where: { ["al", "d", "albumName", "duration"].contains($0.name) }))
+        let knownVideo = MusicLookup.knownAnimatedArtwork(for: flowerMedia)
+        precondition(knownVideo?.motion?.absoluteString == "https://mvod.itunes.apple.com/itunes-assets/HLSVideo211/v4/97/27/b8/9727b8cd-0941-b676-f0dd-892e8b90bf08/P1498503123_Anull_video_gr240_sdr_768x768-.mp4")
+        let wrongArtist = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"wrong","videoId":"wrong","type":"song","title":"Flower In A Hurricane [from GTAVI]","artist":"Other Artist","album":"Grand Theft Auto VI: The Album","durationMs":225000}"#.utf8))
+        precondition(MusicLookup.knownAnimatedArtwork(for: wrongArtist) == nil)
+        let nonGTAVI = try JSONDecoder().decode(MediaItem.self, from: Data(#"{"id":"other","videoId":"other","type":"song","title":"Flower In A Hurricane","artist":"Justice","album":"Unrelated Album","durationMs":225000}"#.utf8))
+        precondition(MusicLookup.knownAnimatedArtwork(for: nonGTAVI) == nil)
         let secondQuery = URLComponents(url: desktopBiodu[1], resolvingAgainstBaseURL: false)?.queryItems ?? []
         precondition(secondQuery.first(where: { $0.name == "s" })?.value == "Flower In A Hurricane")
         precondition(secondQuery.first(where: { $0.name == "a" })?.value == "Justice")
