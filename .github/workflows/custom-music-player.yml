@@ -46,6 +46,12 @@ jobs:
           xcrun --sdk appletvos --show-sdk-version
       - name: Test playback decoding and lyric timing
         run: bash client-tvos/test-models.sh
+      - name: Verify known Apple Music motion MP4 response
+        shell: bash
+        run: |
+          curl --head --location --silent --show-error --max-time 20 \
+            --write-out 'Apple artwork status: %{http_code} content-type: %{content_type} bytes: %{size_download}\\n' \
+            --url 'https://mvod.itunes.apple.com/itunes-assets/HLSVideo211/v4/97/27/b8/9727b8cd-0941-b676-f0dd-892e8b90bf08/P1498503123_Anull_video_gr240_sdr_768x768-.mp4' | tail -n 15
       - name: Build unsigned Apple TV IPA
         working-directory: client-tvos
         env:
